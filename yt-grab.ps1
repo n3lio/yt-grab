@@ -2,41 +2,54 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# Le exe compile (-NoConsole) n'a pas de console ; on tente l'UTF-8 mais on
+# ignore si ca echoue.
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # ----------------- App metadata (mettre à jour à chaque release) -----------------
 
 $AppName    = 'My YouTube Downloader'
-$AppVersion = '1.1.0'
+$AppVersion = '1.1.1'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$crashLog  = Join-Path $scriptDir 'yt-grab-crash.log'
+# Quand on tourne en exe (PS2EXE), $MyInvocation.MyCommand.Path peut etre vide.
+# Fallback : repertoire de l'exe lui-meme.
+$scriptDir = $null
+try {
+    if ($MyInvocation.MyCommand.Path) {
+        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    }
+} catch {}
+if (-not $scriptDir) {
+    try { $scriptDir = [System.IO.Path]::GetDirectoryName([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) } catch {}
+}
+if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
+
+$crashLog = Join-Path $scriptDir 'yt-grab-crash.log'
 
 function Write-Crash {
     param([string]$Where, $ErrObj)
-    $msg = "[$(Get-Date -Format o)] $Where`n"
-    if ($ErrObj) {
-        $msg += ($ErrObj | Out-String)
-        if ($ErrObj.ScriptStackTrace) { $msg += "`n$($ErrObj.ScriptStackTrace)`n" }
-        if ($ErrObj.Exception) { $msg += "`n$($ErrObj.Exception.ToString())`n" }
-    }
-    $msg += "`n----`n"
-    Add-Content -Path $crashLog -Value $msg -Encoding UTF8
-}
-
-trap {
-    Write-Crash -Where 'TOP-LEVEL trap' -ErrObj $_
-    continue
+    try {
+        $msg = "[$(Get-Date -Format o)] $Where`n"
+        if ($ErrObj) {
+            $msg += ($ErrObj | Out-String)
+            if ($ErrObj.ScriptStackTrace) { $msg += "`n$($ErrObj.ScriptStackTrace)`n" }
+            if ($ErrObj.Exception) { $msg += "`n$($ErrObj.Exception.ToString())`n" }
+        }
+        $msg += "`n----`n"
+        Add-Content -Path $crashLog -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {}
 }
 
 try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 } catch {
+    [System.Windows.Forms.MessageBox]::Show("Echec du chargement WinForms : $($_.Exception.Message)", 'yt-grab', 'OK', 'Error') | Out-Null
     Write-Crash -Where 'Add-Type' -ErrObj $_
-    throw
+    return
 }
 
 $configFile = Join-Path $scriptDir 'yt-grab.config.json'
