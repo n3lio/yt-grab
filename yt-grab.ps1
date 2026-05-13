@@ -10,7 +10,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # ----------------- App metadata (mettre à jour à chaque release) -----------------
 
 $AppName    = 'My YouTube Downloader'
-$AppVersion = '1.1.1'
+$AppVersion = '1.1.2'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -128,9 +128,11 @@ function Quote-Arg {
 }
 
 function Clean-YouTubeUrl {
-    param([string]$Input)
-    if (-not $Input) { return '' }
-    $s = $Input.Trim()
+    # NB: ne pas nommer le parametre $Input — c'est une variable automatique
+    # reservee par PowerShell, le binding casse en exe compile.
+    param([string]$RawUrl)
+    if (-not $RawUrl) { return '' }
+    $s = $RawUrl.Trim()
 
     $patterns = @(
         'https?://(?:www\.|m\.)?youtube\.com/watch\?[^\s"<>]+',
@@ -153,7 +155,8 @@ function Clean-YouTubeUrl {
         return $matched
     }
 
-    $host = $uri.Host.ToLower()
+    # NB: ne pas nommer cette variable $host — reservee par PowerShell aussi.
+    $uriHost = $uri.Host.ToLower()
     $path = $uri.AbsolutePath
     $query = @{}
     if ($uri.Query) {
@@ -166,7 +169,7 @@ function Clean-YouTubeUrl {
         }
     }
 
-    if ($host -like '*youtu.be*') {
+    if ($uriHost -like '*youtu.be*') {
         $videoId = $path.TrimStart('/').Split('/')[0]
         if (-not $videoId) { return $matched }
         if ($query.ContainsKey('list')) {
@@ -460,7 +463,7 @@ $btnGo.Add_Click({
     try {
         if ($script:running) { return }
 
-        $cleanedUrl = Clean-YouTubeUrl $txtUrl.Text
+        $cleanedUrl = Clean-YouTubeUrl -RawUrl $txtUrl.Text
         if ([string]::IsNullOrWhiteSpace($cleanedUrl) -or $cleanedUrl -notmatch '^https?://') {
             [System.Windows.Forms.MessageBox]::Show('URL YouTube invalide. Colle un lien complet.', $AppName, 'OK', 'Warning') | Out-Null
             return
