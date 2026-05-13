@@ -5,17 +5,17 @@ Petite app Windows pour télécharger des vidéos / audio YouTube sans toucher a
 ## Prérequis
 
 - Windows 10 ou 11
-- `yt-dlp` accessible dans le `PATH`
-- `ffmpeg` accessible dans le `PATH`
+- `yt-dlp.exe` quelque part sur la machine (typiquement `Downloads\yt-dlp\yt-dlp.exe`)
+- `ffmpeg.exe` accessible — soit dans le `PATH` (ex: installé via `winget install Gyan.FFmpeg`), soit dans un dossier connu
 
-Vérifier dans une fenêtre PowerShell :
+Le script cherche ces exécutables dans cet ordre :
+1. Chemin mémorisé dans `yt-grab.config.json` (créé après une première sélection manuelle)
+2. `PATH` du système
+3. Emplacements habituels : `Downloads\yt-dlp\`, `Documents\yt-dlp\`, `Desktop\yt-dlp\`, à côté du script
+4. Scan récursif (depth 3) de `Downloads`, `Documents`, `Desktop`
+5. Si toujours introuvable → fenêtre "Localise yt-dlp.exe", le chemin choisi est mémorisé pour les prochains lancements
 
-```powershell
-yt-dlp --version
-ffmpeg -version
-```
-
-Si l'une des deux commandes ne répond pas, ajouter l'exécutable au `PATH`.
+Donc tu peux déplacer le dossier `yt-dlp` librement entre Downloads / Documents / Desktop sans rien reconfigurer.
 
 ## Installation
 

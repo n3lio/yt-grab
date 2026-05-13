@@ -7,15 +7,95 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-function Find-Tool {
-    param([string]$Name)
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$configFile = Join-Path $scriptDir 'yt-grab.config.json'
+
+function Read-Config {
+    if (Test-Path $configFile) {
+        try { return Get-Content $configFile -Raw | ConvertFrom-Json } catch { return $null }
+    }
     return $null
 }
 
-$ytdlp = Find-Tool 'yt-dlp'
-$ffmpeg = Find-Tool 'ffmpeg'
+function Save-Config {
+    param($Config)
+    $Config | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
+}
+
+function Find-Tool {
+    param(
+        [string]$Name,
+        [string]$ExeName,
+        [string]$Hint
+    )
+
+    $config = Read-Config
+    if ($config -and $config.$Name -and (Test-Path $config.$Name)) {
+        return $config.$Name
+    }
+
+    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    $roots = @(
+        $scriptDir,
+        (Join-Path $env:USERPROFILE 'Downloads'),
+        (Join-Path $env:USERPROFILE 'Documents'),
+        (Join-Path $env:USERPROFILE 'Desktop'),
+        (Join-Path $env:USERPROFILE 'Downloads\yt-dlp'),
+        (Join-Path $env:USERPROFILE 'Documents\yt-dlp'),
+        (Join-Path $env:USERPROFILE 'Desktop\yt-dlp'),
+        (Join-Path $env:USERPROFILE 'Downloads\ffmpeg\bin'),
+        (Join-Path $env:USERPROFILE 'Documents\ffmpeg\bin'),
+        'C:\ffmpeg\bin',
+        'C:\Program Files\ffmpeg\bin'
+    )
+
+    foreach ($root in $roots) {
+        $candidate = Join-Path $root $ExeName
+        if (Test-Path $candidate) { return $candidate }
+    }
+
+    foreach ($root in @($env:USERPROFILE + '\Downloads', $env:USERPROFILE + '\Documents', $env:USERPROFILE + '\Desktop')) {
+        if (-not (Test-Path $root)) { continue }
+        $found = Get-ChildItem -Path $root -Filter $ExeName -Recurse -ErrorAction SilentlyContinue -Depth 3 | Select-Object -First 1
+        if ($found) { return $found.FullName }
+    }
+
+    return $null
+}
+
+function Prompt-ToolPath {
+    param([string]$Name, [string]$ExeName)
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = "Localise $ExeName"
+    $dlg.Filter = "$ExeName|$ExeName"
+    $dlg.InitialDirectory = Join-Path $env:USERPROFILE 'Downloads'
+    if ($dlg.ShowDialog() -eq 'OK') {
+        $config = Read-Config
+        if (-not $config) { $config = [PSCustomObject]@{} }
+        if (-not ($config.PSObject.Properties.Name -contains $Name)) {
+            $config | Add-Member -NotePropertyName $Name -NotePropertyValue $dlg.FileName
+        } else {
+            $config.$Name = $dlg.FileName
+        }
+        Save-Config $config
+        return $dlg.FileName
+    }
+    return $null
+}
+
+$ytdlp = Find-Tool -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
+$ffmpeg = Find-Tool -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
+
+if (-not $ytdlp) {
+    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenêtre suivante (le chemin sera mémorisé).", 'yt-grab', 'OK', 'Information') | Out-Null
+    $ytdlp = Prompt-ToolPath -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
+}
+if (-not $ffmpeg) {
+    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenêtre suivante (le chemin sera mémorisé).", 'yt-grab', 'OK', 'Information') | Out-Null
+    $ffmpeg = Prompt-ToolPath -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
+}
 
 $defaultOut = Join-Path $env:USERPROFILE 'Downloads\yt-grab'
 if (-not (Test-Path $defaultOut)) { New-Item -ItemType Directory -Path $defaultOut | Out-Null }
