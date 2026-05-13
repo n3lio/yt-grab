@@ -4,6 +4,19 @@ param()
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# ----------------- App metadata (mettre à jour à chaque release) -----------------
+
+$AppName    = 'My YouTube Downloader'
+$AppVersion = '1.1.0'
+$AppAuthor  = 'n3lio'
+$AppRepo    = 'https://github.com/n3lio/yt-grab'
+$AppChangelog = @"
+v1.1.0 — Logs cachés par défaut, barre de progression, nettoyage automatique
+        de l'URL collée, bouton À propos.
+v1.0.1 — Lancement robuste via cmd.exe + log fichier (corrige les crashs au clic).
+v1.0.0 — Version initiale : MP4/MP3, playlist, sous-titres, dossier de sortie.
+"@
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $crashLog  = Join-Path $scriptDir 'yt-grab-crash.log'
 
@@ -100,33 +113,107 @@ function Prompt-ToolPath {
 
 function Quote-Arg {
     param([string]$Arg)
-    if ($Arg -match '[\s"]') {
+    if ($Arg -match '[\s"&|<>^()%]') {
         $escaped = $Arg -replace '"', '\"'
         return '"' + $escaped + '"'
     }
     return $Arg
 }
 
+function Clean-YouTubeUrl {
+    param([string]$Input)
+    if (-not $Input) { return '' }
+    $s = $Input.Trim()
+
+    $patterns = @(
+        'https?://(?:www\.|m\.)?youtube\.com/watch\?[^\s"<>]+',
+        'https?://(?:www\.|m\.)?youtube\.com/playlist\?[^\s"<>]+',
+        'https?://(?:www\.|m\.)?youtube\.com/shorts/[A-Za-z0-9_-]+',
+        'https?://(?:www\.|m\.)?youtube\.com/embed/[A-Za-z0-9_-]+',
+        'https?://youtu\.be/[A-Za-z0-9_-]+(?:\?[^\s"<>]*)?'
+    )
+
+    $matched = $null
+    foreach ($p in $patterns) {
+        $m = [regex]::Match($s, $p, 'IgnoreCase')
+        if ($m.Success) { $matched = $m.Value; break }
+    }
+    if (-not $matched) { return $s }
+
+    try {
+        $uri = [System.Uri]$matched
+    } catch {
+        return $matched
+    }
+
+    $host = $uri.Host.ToLower()
+    $path = $uri.AbsolutePath
+    $query = @{}
+    if ($uri.Query) {
+        foreach ($kv in $uri.Query.TrimStart('?').Split('&')) {
+            if (-not $kv) { continue }
+            $parts = $kv.Split('=', 2)
+            $k = $parts[0]
+            $v = if ($parts.Count -gt 1) { $parts[1] } else { '' }
+            $query[$k] = $v
+        }
+    }
+
+    if ($host -like '*youtu.be*') {
+        $videoId = $path.TrimStart('/').Split('/')[0]
+        if (-not $videoId) { return $matched }
+        if ($query.ContainsKey('list')) {
+            return "https://www.youtube.com/watch?v=$videoId&list=$($query['list'])"
+        }
+        return "https://www.youtube.com/watch?v=$videoId"
+    }
+
+    if ($path -eq '/watch') {
+        if (-not $query.ContainsKey('v')) { return $matched }
+        $clean = "https://www.youtube.com/watch?v=$($query['v'])"
+        if ($query.ContainsKey('list')) { $clean += "&list=$($query['list'])" }
+        return $clean
+    }
+
+    if ($path -eq '/playlist') {
+        if ($query.ContainsKey('list')) { return "https://www.youtube.com/playlist?list=$($query['list'])" }
+        return $matched
+    }
+
+    if ($path -like '/shorts/*') {
+        $videoId = $path.Substring('/shorts/'.Length).Split('/')[0]
+        return "https://www.youtube.com/shorts/$videoId"
+    }
+
+    return $matched
+}
+
 $ytdlp  = Find-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
 $ffmpeg = Find-Tool -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
 
 if (-not $ytdlp) {
-    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", 'My YouTube Downloader', 'OK', 'Information') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", $AppName, 'OK', 'Information') | Out-Null
     $ytdlp = Prompt-ToolPath -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
 }
 if (-not $ffmpeg) {
-    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", 'My YouTube Downloader', 'OK', 'Information') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", $AppName, 'OK', 'Information') | Out-Null
     $ffmpeg = Prompt-ToolPath -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
 }
 
 $defaultOut = Join-Path $env:USERPROFILE 'Downloads\yt-grab'
 if (-not (Test-Path $defaultOut)) { New-Item -ItemType Directory -Path $defaultOut | Out-Null }
 
-# ----------------- UI -----------------
+# ----------------- UI dimensions -----------------
+
+$collapsedHeight = 360
+$expandedHeight  = 600
+
+# ----------------- UI build -----------------
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'My YouTube Downloader'
-$form.Size = New-Object System.Drawing.Size(720, 560)
+$form.Text = $AppName
+$form.Size = New-Object System.Drawing.Size(720, $collapsedHeight)
+$form.MinimumSize = New-Object System.Drawing.Size(680, $collapsedHeight)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -222,9 +309,17 @@ $btnOpen.Add_Click({
 })
 $form.Controls.Add($btnOpen)
 
+$btnAbout = New-Object System.Windows.Forms.Button
+$btnAbout.Text = '?'
+$btnAbout.Size = New-Object System.Drawing.Size(32, 32)
+$btnAbout.Location = New-Object System.Drawing.Point(653, 205)
+$btnAbout.Anchor = 'Top, Right'
+$btnAbout.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+$form.Controls.Add($btnAbout)
+
 $lblStatus = New-Object System.Windows.Forms.Label
 $lblStatus.Location = New-Object System.Drawing.Point(285, 213)
-$lblStatus.Size = New-Object System.Drawing.Size(400, 20)
+$lblStatus.Size = New-Object System.Drawing.Size(360, 20)
 $lblStatus.Anchor = 'Top, Left, Right'
 if ($ytdlp -and $ffmpeg) {
     $lblStatus.Text = "Prêt. yt-dlp + ffmpeg détectés."
@@ -235,9 +330,26 @@ if ($ytdlp -and $ffmpeg) {
 }
 $form.Controls.Add($lblStatus)
 
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(15, 250)
+$progressBar.Size = New-Object System.Drawing.Size(670, 18)
+$progressBar.Minimum = 0
+$progressBar.Maximum = 100
+$progressBar.Value = 0
+$progressBar.Style = 'Continuous'
+$progressBar.Anchor = 'Top, Left, Right'
+$form.Controls.Add($progressBar)
+
+$btnLogs = New-Object System.Windows.Forms.Button
+$btnLogs.Text = 'Afficher les logs ▾'
+$btnLogs.Location = New-Object System.Drawing.Point(15, 280)
+$btnLogs.Size = New-Object System.Drawing.Size(160, 26)
+$btnLogs.FlatStyle = 'Flat'
+$form.Controls.Add($btnLogs)
+
 $txtLog = New-Object System.Windows.Forms.TextBox
-$txtLog.Location = New-Object System.Drawing.Point(15, 250)
-$txtLog.Size = New-Object System.Drawing.Size(670, 250)
+$txtLog.Location = New-Object System.Drawing.Point(15, 315)
+$txtLog.Size = New-Object System.Drawing.Size(670, 240)
 $txtLog.Multiline = $true
 $txtLog.ScrollBars = 'Vertical'
 $txtLog.ReadOnly = $true
@@ -245,19 +357,51 @@ $txtLog.Font = New-Object System.Drawing.Font('Consolas', 9)
 $txtLog.BackColor = [System.Drawing.Color]::FromArgb(20, 20, 24)
 $txtLog.ForeColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
 $txtLog.Anchor = 'Top, Bottom, Left, Right'
+$txtLog.Visible = $false
 $form.Controls.Add($txtLog)
 
-# ----------------- Process state (script scope) -----------------
+$btnLogs.Add_Click({
+    try {
+        if ($txtLog.Visible) {
+            $txtLog.Visible = $false
+            $btnLogs.Text = 'Afficher les logs ▾'
+            $form.Height = $collapsedHeight
+        } else {
+            $txtLog.Visible = $true
+            $btnLogs.Text = 'Masquer les logs ▴'
+            $form.Height = $expandedHeight
+        }
+    } catch { Write-Crash -Where 'btnLogs.Click' -ErrObj $_ }
+})
 
-$script:proc        = $null
-$script:logFile     = $null
-$script:logPos      = 0
-$script:logLockObj  = New-Object Object
-$script:running     = $false
+$btnAbout.Add_Click({
+    try {
+        $msg = @"
+$AppName  v$AppVersion
+
+Auteur : $AppAuthor
+Repo   : $AppRepo
+
+Mini app Windows pour télécharger des vidéos / audio YouTube
+sans toucher au terminal. Utilise yt-dlp + ffmpeg.
+
+Changelog :
+$AppChangelog
+"@
+        [System.Windows.Forms.MessageBox]::Show($msg, "À propos — $AppName", 'OK', 'Information') | Out-Null
+    } catch { Write-Crash -Where 'btnAbout.Click' -ErrObj $_ }
+})
+
+# ----------------- Process state -----------------
+
+$script:proc       = $null
+$script:logFile    = $null
+$script:logPos     = 0
+$script:running    = $false
 
 function Append-LogText { param([string]$Text) if ($Text) { $txtLog.AppendText($Text) } }
 
-# ----------------- Timer: pumps the file-based log into the textbox -----------------
+# ----------------- Timer -----------------
 
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 200
@@ -276,6 +420,15 @@ $timer.Add_Tick({
                         Append-LogText $chunk
                         $txtLog.SelectionStart = $txtLog.Text.Length
                         $txtLog.ScrollToCaret()
+
+                        $pctMatches = [regex]::Matches($chunk, '\[download\]\s+(\d+(?:\.\d+)?)%')
+                        if ($pctMatches.Count -gt 0) {
+                            $last = $pctMatches[$pctMatches.Count - 1]
+                            $pct = [int][double]$last.Groups[1].Value
+                            if ($pct -lt 0) { $pct = 0 }
+                            if ($pct -gt 100) { $pct = 100 }
+                            $progressBar.Value = $pct
+                        }
                     }
                 }
             } finally {
@@ -288,6 +441,7 @@ $timer.Add_Tick({
             $exit = $script:proc.ExitCode
             $btnGo.Enabled = $true
             if ($exit -eq 0) {
+                $progressBar.Value = 100
                 $lblStatus.Text = 'Terminé.'
                 $lblStatus.ForeColor = [System.Drawing.Color]::DarkGreen
             } else {
@@ -301,25 +455,21 @@ $timer.Add_Tick({
 })
 $timer.Start()
 
-# ----------------- Click: build args, spawn cmd.exe with redirection -----------------
+# ----------------- Click: download -----------------
 
 $btnGo.Add_Click({
     try {
         if ($script:running) { return }
 
-        $url = $txtUrl.Text.Trim()
-        if ([string]::IsNullOrWhiteSpace($url)) {
-            [System.Windows.Forms.MessageBox]::Show('Colle une URL YouTube.', 'My YouTube Downloader', 'OK', 'Warning') | Out-Null
+        $cleanedUrl = Clean-YouTubeUrl $txtUrl.Text
+        if ([string]::IsNullOrWhiteSpace($cleanedUrl) -or $cleanedUrl -notmatch '^https?://') {
+            [System.Windows.Forms.MessageBox]::Show('URL YouTube invalide. Colle un lien complet.', $AppName, 'OK', 'Warning') | Out-Null
             return
         }
-        if (-not $ytdlp) {
-            [System.Windows.Forms.MessageBox]::Show('yt-dlp introuvable.', 'My YouTube Downloader', 'OK', 'Error') | Out-Null
-            return
-        }
-        if (-not $ffmpeg) {
-            [System.Windows.Forms.MessageBox]::Show('ffmpeg introuvable.', 'My YouTube Downloader', 'OK', 'Error') | Out-Null
-            return
-        }
+        $txtUrl.Text = $cleanedUrl
+
+        if (-not $ytdlp) { [System.Windows.Forms.MessageBox]::Show('yt-dlp introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
+        if (-not $ffmpeg) { [System.Windows.Forms.MessageBox]::Show('ffmpeg introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
 
         $out = $txtOut.Text
         if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
@@ -347,7 +497,7 @@ $btnGo.Add_Click({
         $ytArgs.Add('-o'); $ytArgs.Add($template)
         $ytArgs.Add('--newline'); $ytArgs.Add('--no-mtime')
         $ytArgs.Add('--encoding'); $ytArgs.Add('utf-8')
-        $ytArgs.Add($url)
+        $ytArgs.Add($cleanedUrl)
 
         $argString = ($ytArgs | ForEach-Object { Quote-Arg $_ }) -join ' '
 
@@ -355,10 +505,10 @@ $btnGo.Add_Click({
         $script:logPos  = 0
         New-Item -ItemType File -Path $script:logFile -Force | Out-Null
 
-        # Use cmd.exe to handle stdout+stderr redirection cleanly, with chcp 65001 for UTF-8.
         $cmdLine = "chcp 65001 >nul & `"$ytdlp`" $argString > `"$($script:logFile)`" 2>&1"
 
         $btnGo.Enabled = $false
+        $progressBar.Value = 0
         $lblStatus.Text = 'Téléchargement en cours...'
         $lblStatus.ForeColor = [System.Drawing.Color]::DarkBlue
         $txtLog.Clear()
@@ -382,7 +532,6 @@ try {
 }
 $timer.Stop()
 
-# Cleanup temp log
 if ($script:logFile -and (Test-Path $script:logFile)) {
     try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}
 }
