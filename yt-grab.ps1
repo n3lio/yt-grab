@@ -10,12 +10,6 @@ $AppName    = 'My YouTube Downloader'
 $AppVersion = '1.1.0'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
-$AppChangelog = @"
-v1.1.0 — Logs cachés par défaut, barre de progression, nettoyage automatique
-        de l'URL collée, bouton À propos.
-v1.0.1 — Lancement robuste via cmd.exe + log fichier (corrige les crashs au clic).
-v1.0.0 — Version initiale : MP4/MP3, playlist, sous-titres, dossier de sortie.
-"@
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $crashLog  = Join-Path $scriptDir 'yt-grab-crash.log'
@@ -376,19 +370,11 @@ $btnLogs.Add_Click({
 
 $btnAbout.Add_Click({
     try {
-        $msg = @"
-$AppName  v$AppVersion
-
-Auteur : $AppAuthor
-Repo   : $AppRepo
-
-Mini app Windows pour télécharger des vidéos / audio YouTube
-sans toucher au terminal. Utilise yt-dlp + ffmpeg.
-
-Changelog :
-$AppChangelog
-"@
-        [System.Windows.Forms.MessageBox]::Show($msg, "À propos — $AppName", 'OK', 'Information') | Out-Null
+        $msg = "$AppName v$AppVersion`r`n" +
+               "by $AppAuthor`r`n" +
+               "$AppRepo`r`n`r`n" +
+               "Powered by yt-dlp + ffmpeg."
+        [System.Windows.Forms.MessageBox]::Show($msg, "About", 'OK', 'Information') | Out-Null
     } catch { Write-Crash -Where 'btnAbout.Click' -ErrObj $_ }
 })
 
