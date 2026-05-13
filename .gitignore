@@ -3,3 +3,4 @@ Thumbs.db
 *.log
 *.tmp
 yt-grab.config.json
+yt-grab-crash.log
