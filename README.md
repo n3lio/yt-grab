@@ -41,3 +41,22 @@ Double-cliquer sur **`launch.bat`**. Une petite fenêtre Windows s'ouvre :
 cd yt-grab
 git pull
 ```
+
+## Compiler en .exe (optionnel)
+
+Tu peux générer un vrai `yt-grab.exe` double-cliquable, avec icône custom et métadonnées Windows propres (Propriétés → Détails) :
+
+1. Pose un fichier **`yt-grab.ico`** à côté du script (icône multi-résolution 16/32/48/256). [icoconvert.com](https://icoconvert.com) convertit un PNG en .ico en quelques clics.
+2. Lance le build :
+
+```powershell
+.\build.ps1
+```
+
+Au premier lancement, il installe automatiquement le module `ps2exe` (Scope CurrentUser, pas besoin d'admin). Le script lit la version, le nom et l'auteur directement depuis `yt-grab.ps1` pour rester synchro. Si tu veux lancer l'exe juste après le build :
+
+```powershell
+.\build.ps1 -Run
+```
+
+L'exe est créé à côté du `.ps1` (~150 KB). Tu peux l'épingler à la barre des tâches, créer un raccourci sur le Bureau, etc.
