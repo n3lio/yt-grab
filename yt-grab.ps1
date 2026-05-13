@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +12,7 @@ $configFile = Join-Path $scriptDir 'yt-grab.config.json'
 
 function Read-Config {
     if (Test-Path $configFile) {
-        try { return Get-Content $configFile -Raw | ConvertFrom-Json } catch { return $null }
+        try { return Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
     }
     return $null
 }
@@ -25,8 +25,7 @@ function Save-Config {
 function Find-Tool {
     param(
         [string]$Name,
-        [string]$ExeName,
-        [string]$Hint
+        [string]$ExeName
     )
 
     $config = Read-Config
@@ -74,10 +73,10 @@ function Prompt-ToolPath {
     if ($dlg.ShowDialog() -eq 'OK') {
         $config = Read-Config
         if (-not $config) { $config = [PSCustomObject]@{} }
-        if (-not ($config.PSObject.Properties.Name -contains $Name)) {
-            $config | Add-Member -NotePropertyName $Name -NotePropertyValue $dlg.FileName
-        } else {
+        if ($config.PSObject.Properties.Name -contains $Name) {
             $config.$Name = $dlg.FileName
+        } else {
+            $config | Add-Member -NotePropertyName $Name -NotePropertyValue $dlg.FileName
         }
         Save-Config $config
         return $dlg.FileName
@@ -85,15 +84,24 @@ function Prompt-ToolPath {
     return $null
 }
 
-$ytdlp = Find-Tool -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
+function Quote-Arg {
+    param([string]$Arg)
+    if ($Arg -match '[\s"]') {
+        $escaped = $Arg -replace '"', '\"'
+        return '"' + $escaped + '"'
+    }
+    return $Arg
+}
+
+$ytdlp  = Find-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
 $ffmpeg = Find-Tool -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
 
 if (-not $ytdlp) {
-    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenêtre suivante (le chemin sera mémorisé).", 'yt-grab', 'OK', 'Information') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", 'My YouTube Downloader', 'OK', 'Information') | Out-Null
     $ytdlp = Prompt-ToolPath -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
 }
 if (-not $ffmpeg) {
-    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenêtre suivante (le chemin sera mémorisé).", 'yt-grab', 'OK', 'Information') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", 'My YouTube Downloader', 'OK', 'Information') | Out-Null
     $ffmpeg = Prompt-ToolPath -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
 }
 
@@ -101,7 +109,7 @@ $defaultOut = Join-Path $env:USERPROFILE 'Downloads\yt-grab'
 if (-not (Test-Path $defaultOut)) { New-Item -ItemType Directory -Path $defaultOut | Out-Null }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'yt-grab'
+$form.Text = 'My YouTube Downloader'
 $form.Size = New-Object System.Drawing.Size(720, 560)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -171,7 +179,7 @@ $txtOut.Anchor = 'Top, Left, Right'
 $form.Controls.Add($txtOut)
 
 $btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Text = 'Parcourir…'
+$btnBrowse.Text = 'Parcourir...'
 $btnBrowse.Location = New-Object System.Drawing.Point(605, 168)
 $btnBrowse.Size = New-Object System.Drawing.Size(80, 26)
 $btnBrowse.Anchor = 'Top, Right'
@@ -204,8 +212,13 @@ $lblStatus = New-Object System.Windows.Forms.Label
 $lblStatus.Location = New-Object System.Drawing.Point(285, 213)
 $lblStatus.Size = New-Object System.Drawing.Size(400, 20)
 $lblStatus.Anchor = 'Top, Left, Right'
-$lblStatus.Text = if ($ytdlp -and $ffmpeg) { "Prêt. yt-dlp + ffmpeg détectés." } else { "ATTENTION : yt-dlp ou ffmpeg introuvable dans PATH." }
-$lblStatus.ForeColor = if ($ytdlp -and $ffmpeg) { [System.Drawing.Color]::DarkGreen } else { [System.Drawing.Color]::DarkRed }
+if ($ytdlp -and $ffmpeg) {
+    $lblStatus.Text = "Prêt. yt-dlp + ffmpeg détectés."
+    $lblStatus.ForeColor = [System.Drawing.Color]::DarkGreen
+} else {
+    $lblStatus.Text = "ATTENTION : yt-dlp ou ffmpeg introuvable."
+    $lblStatus.ForeColor = [System.Drawing.Color]::DarkRed
+}
 $form.Controls.Add($lblStatus)
 
 $txtLog = New-Object System.Windows.Forms.TextBox
@@ -220,99 +233,120 @@ $txtLog.ForeColor = [System.Drawing.Color]::FromArgb(220, 220, 220)
 $txtLog.Anchor = 'Top, Bottom, Left, Right'
 $form.Controls.Add($txtLog)
 
-function Append-Log {
-    param([string]$Text)
-    if ($txtLog.InvokeRequired) {
-        $txtLog.Invoke([Action[string]]{ param($t) Append-Log $t }, $Text)
-        return
+$script:logQueue = New-Object System.Collections.Concurrent.ConcurrentQueue[string]
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 120
+$timer.Add_Tick({
+    $line = $null
+    while ($script:logQueue.TryDequeue([ref]$line)) {
+        $txtLog.AppendText($line + [Environment]::NewLine)
     }
-    $txtLog.AppendText($Text + [Environment]::NewLine)
     $txtLog.SelectionStart = $txtLog.Text.Length
     $txtLog.ScrollToCaret()
-}
+})
+$timer.Start()
+
+$script:proc = $null
 
 $btnGo.Add_Click({
     $url = $txtUrl.Text.Trim()
     if ([string]::IsNullOrWhiteSpace($url)) {
-        [System.Windows.Forms.MessageBox]::Show('Colle une URL YouTube.', 'yt-grab', 'OK', 'Warning') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('Colle une URL YouTube.', 'My YouTube Downloader', 'OK', 'Warning') | Out-Null
         return
     }
     if (-not $ytdlp) {
-        [System.Windows.Forms.MessageBox]::Show('yt-dlp introuvable dans PATH.', 'yt-grab', 'OK', 'Error') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('yt-dlp introuvable.', 'My YouTube Downloader', 'OK', 'Error') | Out-Null
         return
     }
     if (-not $ffmpeg) {
-        [System.Windows.Forms.MessageBox]::Show('ffmpeg introuvable dans PATH.', 'yt-grab', 'OK', 'Error') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('ffmpeg introuvable.', 'My YouTube Downloader', 'OK', 'Error') | Out-Null
         return
     }
 
     $out = $txtOut.Text
     if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
 
-    $args = @()
+    $ytArgs = New-Object System.Collections.Generic.List[string]
     if ($rdoMp3.Checked) {
-        $args += @('-x', '--audio-format', 'mp3', '--audio-quality', '0')
+        $ytArgs.AddRange([string[]]@('-x', '--audio-format', 'mp3', '--audio-quality', '0'))
     } else {
-        $args += @('-f', 'bv*+ba/b', '--merge-output-format', 'mp4')
+        $ytArgs.AddRange([string[]]@('-f', 'bv*+ba/b', '--merge-output-format', 'mp4'))
     }
 
-    if (-not $chkPlaylist.Checked) { $args += '--no-playlist' } else { $args += '--yes-playlist' }
+    if ($chkPlaylist.Checked) { $ytArgs.Add('--yes-playlist') } else { $ytArgs.Add('--no-playlist') }
 
     if ($chkSubs.Checked) {
-        $args += @('--write-subs', '--write-auto-subs', '--sub-langs', 'fr,en', '--convert-subs', 'srt')
+        $ytArgs.AddRange([string[]]@('--write-subs', '--write-auto-subs', '--sub-langs', 'fr,en', '--convert-subs', 'srt'))
     }
 
     $template = if ($chkPlaylist.Checked) {
-        Join-Path $out '%(playlist_title)s/%(playlist_index)s - %(title)s.%(ext)s'
+        Join-Path $out '%(playlist_title)s\%(playlist_index)s - %(title)s.%(ext)s'
     } else {
         Join-Path $out '%(title)s.%(ext)s'
     }
-    $args += @('-o', $template, '--newline', '--no-mtime', $url)
+
+    $ffmpegDir = Split-Path -Parent $ffmpeg
+    $ytArgs.AddRange([string[]]@('--ffmpeg-location', $ffmpegDir))
+    $ytArgs.AddRange([string[]]@('-o', $template, '--newline', '--no-mtime', '--encoding', 'utf-8', $url))
+
+    $argString = ($ytArgs | ForEach-Object { Quote-Arg $_ }) -join ' '
 
     $btnGo.Enabled = $false
-    $lblStatus.Text = 'Téléchargement en cours…'
+    $lblStatus.Text = 'Téléchargement en cours...'
     $lblStatus.ForeColor = [System.Drawing.Color]::DarkBlue
     $txtLog.Clear()
-    Append-Log "> yt-dlp $($args -join ' ')"
-    Append-Log ""
+    $script:logQueue.Enqueue("> $ytdlp $argString")
+    $script:logQueue.Enqueue("")
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $ytdlp
-    foreach ($a in $args) { $psi.ArgumentList.Add($a) }
+    $psi.Arguments = $argString
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $psi.WorkingDirectory = $out
 
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-    $proc.EnableRaisingEvents = $true
+    $script:proc = New-Object System.Diagnostics.Process
+    $script:proc.StartInfo = $psi
+    $script:proc.EnableRaisingEvents = $true
 
     $onData = {
-        param($s, $e)
-        if ($e.Data) { Append-Log $e.Data }
+        param($srcSender, $e)
+        if ($null -ne $e.Data) { $script:logQueue.Enqueue([string]$e.Data) }
     }
-    $proc.add_OutputDataReceived($onData)
-    $proc.add_ErrorDataReceived($onData)
-    $proc.add_Exited({
-        param($s, $e)
-        $form.Invoke([Action]{
-            $btnGo.Enabled = $true
-            if ($proc.ExitCode -eq 0) {
-                $lblStatus.Text = 'Terminé.'
-                $lblStatus.ForeColor = [System.Drawing.Color]::DarkGreen
-            } else {
-                $lblStatus.Text = "Échec (code $($proc.ExitCode))."
-                $lblStatus.ForeColor = [System.Drawing.Color]::DarkRed
-            }
-        }) | Out-Null
+    $script:proc.add_OutputDataReceived($onData)
+    $script:proc.add_ErrorDataReceived($onData)
+    $script:proc.add_Exited({
+        param($srcSender, $e)
+        $exit = $script:proc.ExitCode
+        try {
+            $form.BeginInvoke([Action]{
+                $btnGo.Enabled = $true
+                if ($exit -eq 0) {
+                    $lblStatus.Text = 'Terminé.'
+                    $lblStatus.ForeColor = [System.Drawing.Color]::DarkGreen
+                } else {
+                    $lblStatus.Text = "Échec (code $exit)."
+                    $lblStatus.ForeColor = [System.Drawing.Color]::DarkRed
+                }
+            }) | Out-Null
+        } catch {}
     })
 
-    [void]$proc.Start()
-    $proc.BeginOutputReadLine()
-    $proc.BeginErrorReadLine()
+    try {
+        [void]$script:proc.Start()
+        $script:proc.BeginOutputReadLine()
+        $script:proc.BeginErrorReadLine()
+    } catch {
+        $script:logQueue.Enqueue("Erreur lancement : $($_.Exception.Message)")
+        $btnGo.Enabled = $true
+        $lblStatus.Text = 'Erreur de lancement.'
+        $lblStatus.ForeColor = [System.Drawing.Color]::DarkRed
+    }
 })
 
 [void]$form.ShowDialog()
+$timer.Stop()
