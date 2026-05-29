@@ -51,8 +51,8 @@ jobs:
             -InputFile  yt-grab.ps1 `
             -OutputFile yt-grab.exe `
             -NoConsole `
-            -Title       'My YouTube Downloader' `
-            -Description 'YouTube downloader' `
+            -Title       'YouTube Grabber by n3lio' `
+            -Description 'YouTube Grabber by n3lio' `
             -Company     'n3lio' `
             -Product     'My YouTube Downloader' `
             -Version     $v `

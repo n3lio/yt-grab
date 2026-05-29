@@ -7,9 +7,9 @@
 ;  Usage : double-cliquer "build-installer.bat"
 ; =========================================================
 
-#define AppName      "My YouTube Downloader"
-#define AppShortName "yt-grab"
-#define AppVersion   "1.4.0"
+#define AppName      "YouTube Grabber by n3lio"
+#define AppShortName "YouTube Grabber"
+#define AppVersion   "1.4.1"
 #define AppPublisher "n3lio"
 #define AppURL       "https://github.com/n3lio/yt-grab"
 #define AppExe       "yt-grab.exe"

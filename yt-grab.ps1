@@ -9,8 +9,8 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
 # ----------------- App metadata (mettre à jour à chaque release) -----------------
 
-$AppName    = 'My YouTube Downloader'
-$AppVersion = '1.4.0'
+$AppName    = 'YouTube Grabber by n3lio'
+$AppVersion = '1.4.1'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
