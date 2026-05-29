@@ -9,7 +9,7 @@
 
 #define AppName      "YouTube Grabber by n3lio"
 #define AppShortName "YouTube Grabber"
-#define AppVersion   "2.0.1"
+#define AppVersion   "2.0.2"
 #define AppPublisher "n3lio"
 #define AppURL       "https://github.com/n3lio/yt-grab"
 #define AppExe       "yt-grab.exe"

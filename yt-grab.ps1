@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.1'
+$AppVersion = '2.0.2'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -809,41 +809,43 @@ $TxtUpdateBadge.Add_MouseLeftButtonDown({
 $script:previewJob   = $null
 $script:lastPreviewUrl = ''
 
-$CmbUrl.Add_TextChanged({
-    try {
-        $raw = $CmbUrl.Text.Trim()
-        $detected = Detect-UrlType $raw
-        if ($detected -eq 'playlist') { $ChkPlaylist.IsChecked = $true }
-        elseif ($detected -eq 'video')  { $ChkPlaylist.IsChecked = $false }
+# WPF ComboBox editable : pas de Add_TextChanged direct, on passe par le routed event
+$CmbUrl.AddHandler(
+    [System.Windows.Controls.Primitives.TextBoxBase]::TextChangedEvent,
+    [System.Windows.Controls.TextChangedEventHandler]{
+        try {
+            $raw      = $CmbUrl.Text.Trim()
+            $detected = Detect-UrlType $raw
+            if ($detected -eq 'playlist')  { $ChkPlaylist.IsChecked = $true }
+            elseif ($detected -eq 'video') { $ChkPlaylist.IsChecked = $false }
 
-        # Preview : on lance seulement si URL valide et changée
-        $cleaned = Clean-YouTubeUrl $raw
-        if ($cleaned -ne $script:lastPreviewUrl -and $cleaned -match '^https?://') {
-            $script:lastPreviewUrl = $cleaned
-            # Annule le job preview précédent
-            if ($script:previewJob) { try { Stop-Job $script:previewJob -ErrorAction SilentlyContinue; Remove-Job $script:previewJob -Force -ErrorAction SilentlyContinue } catch {} }
-            # Affiche la card en mode loading
-            $PreviewCard.Visibility  = 'Visible'
-            $TxtPreviewLoading.Visibility = 'Visible'
-            $ImgThumb.Source         = $null
-            $TxtPreviewTitle.Text    = ''
-            $TxtPreviewChannel.Text  = ''
-            $TxtPreviewDuration.Text = ''
-            # Lance le job
-            $ytdlpPath = $ytdlp
-            $script:previewJob = Start-Job -ScriptBlock {
-                param($ytPath, $url)
-                try {
-                    $json = & $ytPath --dump-json --no-playlist --no-warnings $url 2>$null | Select-Object -First 1
-                    if ($json) { return $json | ConvertFrom-Json }
-                } catch {}
-                return $null
-            } -ArgumentList $ytdlp, $cleaned
-        } elseif ($cleaned -notmatch '^https?://') {
-            $PreviewCard.Visibility = 'Collapsed'
-        }
-    } catch {}
-})
+            $cleaned = Clean-YouTubeUrl $raw
+            if ($cleaned -ne $script:lastPreviewUrl -and $cleaned -match '^https?://') {
+                $script:lastPreviewUrl = $cleaned
+                if ($script:previewJob) {
+                    try { Stop-Job $script:previewJob -ErrorAction SilentlyContinue; Remove-Job $script:previewJob -Force -ErrorAction SilentlyContinue } catch {}
+                }
+                $PreviewCard.Visibility       = 'Visible'
+                $TxtPreviewLoading.Visibility = 'Visible'
+                $ImgThumb.Source              = $null
+                $TxtPreviewTitle.Text         = ''
+                $TxtPreviewChannel.Text       = ''
+                $TxtPreviewDuration.Text      = ''
+                $ytdlpPath = $ytdlp
+                $script:previewJob = Start-Job -ScriptBlock {
+                    param($ytPath, $url)
+                    try {
+                        $json = & $ytPath --dump-json --no-playlist --no-warnings $url 2>$null | Select-Object -First 1
+                        if ($json) { return $json | ConvertFrom-Json }
+                    } catch {}
+                    return $null
+                } -ArgumentList $ytdlpPath, $cleaned
+            } elseif ($cleaned -notmatch '^https?://') {
+                $PreviewCard.Visibility = 'Collapsed'
+            }
+        } catch {}
+    }
+)
 
 # ================================================================
 #  Dossier destination
