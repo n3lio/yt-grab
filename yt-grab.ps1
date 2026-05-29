@@ -10,7 +10,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 # ----------------- App metadata (mettre à jour à chaque release) -----------------
 
 $AppName    = 'My YouTube Downloader'
-$AppVersion = '1.3.0'
+$AppVersion = '1.4.0'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -66,55 +66,87 @@ function Save-Config {
     $Config | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
 }
 
-function Find-Tool {
+# Cherche un outil, et si introuvable le télécharge automatiquement dans $scriptDir.
+# Retourne le chemin complet ou $null si échec.
+function Ensure-Tool {
     param([string]$Name, [string]$ExeName)
 
+    # 1. Config mémorisée
     $config = Read-Config
     if ($config -and $config.$Name -and (Test-Path $config.$Name)) { return $config.$Name }
 
+    # 2. Dans le dossier de l'app en premier (Program Files\yt-grab\)
+    $inApp = Join-Path $scriptDir $ExeName
+    if (Test-Path $inApp) { return $inApp }
+
+    # 3. Dans le PATH système
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
 
+    # 4. Scan rapide des emplacements courants (cas où l'utilisateur l'avait déjà)
     $roots = @(
-        $scriptDir,
         (Join-Path $env:USERPROFILE 'Downloads'),
-        (Join-Path $env:USERPROFILE 'Documents'),
-        (Join-Path $env:USERPROFILE 'Desktop'),
         (Join-Path $env:USERPROFILE 'Downloads\yt-dlp'),
-        (Join-Path $env:USERPROFILE 'Documents\yt-dlp'),
-        (Join-Path $env:USERPROFILE 'Desktop\yt-dlp'),
         (Join-Path $env:USERPROFILE 'Downloads\ffmpeg\bin'),
-        (Join-Path $env:USERPROFILE 'Documents\ffmpeg\bin'),
         'C:\ffmpeg\bin',
         'C:\Program Files\ffmpeg\bin'
     )
     foreach ($root in $roots) {
         $candidate = Join-Path $root $ExeName
-        if (Test-Path $candidate) { return $candidate }
+        if (Test-Path $candidate) {
+            # Trouvé ailleurs — on le mémorise dans la config
+            $cfg = Read-Config
+            if (-not $cfg) { $cfg = [PSCustomObject]@{} }
+            if ($cfg.PSObject.Properties.Name -contains $Name) { $cfg.$Name = $candidate }
+            else { $cfg | Add-Member -NotePropertyName $Name -NotePropertyValue $candidate }
+            Save-Config $cfg
+            return $candidate
+        }
     }
 
-    foreach ($root in @($env:USERPROFILE + '\Downloads', $env:USERPROFILE + '\Documents', $env:USERPROFILE + '\Desktop')) {
-        if (-not (Test-Path $root)) { continue }
-        $found = Get-ChildItem -Path $root -Filter $ExeName -Recurse -ErrorAction SilentlyContinue -Depth 3 | Select-Object -First 1
-        if ($found) { return $found.FullName }
-    }
-    return $null
-}
+    # 5. Pas trouvé → téléchargement automatique dans $scriptDir
+    $dest = Join-Path $scriptDir $ExeName
+    $ok   = $false
 
-function Prompt-ToolPath {
-    param([string]$Name, [string]$ExeName)
-    $dlg = New-Object System.Windows.Forms.OpenFileDialog
-    $dlg.Title = "Localise $ExeName"
-    $dlg.Filter = "$ExeName|$ExeName"
-    $dlg.InitialDirectory = Join-Path $env:USERPROFILE 'Downloads'
-    if ($dlg.ShowDialog() -eq 'OK') {
-        $config = Read-Config
-        if (-not $config) { $config = [PSCustomObject]@{} }
-        if ($config.PSObject.Properties.Name -contains $Name) { $config.$Name = $dlg.FileName }
-        else { $config | Add-Member -NotePropertyName $Name -NotePropertyValue $dlg.FileName }
-        Save-Config $config
-        return $dlg.FileName
+    try {
+        if ($Name -eq 'yt-dlp') {
+            # GitHub Releases : yt-dlp/yt-dlp — asset yt-dlp.exe
+            $apiUrl  = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'
+            $release = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+            $asset   = $release.assets | Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -First 1
+            if (-not $asset) { throw 'Asset yt-dlp.exe introuvable dans la release.' }
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+            $ok = $true
+        }
+        elseif ($Name -eq 'ffmpeg') {
+            # On télécharge ffmpeg-master-latest-win64-gpl.zip depuis gyan.dev (build statique officielle)
+            $zipUrl  = 'https://github.com/GyanD/codexffmpeg/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip'
+            $zipDest = Join-Path $env:TEMP 'ffmpeg-latest.zip'
+            $extract = Join-Path $env:TEMP 'ffmpeg-extract'
+            Invoke-WebRequest -Uri $zipUrl -OutFile $zipDest -UseBasicParsing -ErrorAction Stop
+            Expand-Archive -Path $zipDest -DestinationPath $extract -Force
+            # Le zip contient un sous-dossier ffmpeg-xxx/bin/ffmpeg.exe
+            $found = Get-ChildItem -Path $extract -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $found) { throw 'ffmpeg.exe introuvable dans le zip.' }
+            Copy-Item $found.FullName $dest -Force
+            Remove-Item $zipDest -Force -ErrorAction SilentlyContinue
+            Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+            $ok = $true
+        }
+    } catch {
+        Write-Crash -Where "Ensure-Tool:download:$Name" -ErrObj $_
     }
+
+    if ($ok -and (Test-Path $dest)) {
+        # Mémorise le chemin
+        $cfg = Read-Config
+        if (-not $cfg) { $cfg = [PSCustomObject]@{} }
+        if ($cfg.PSObject.Properties.Name -contains $Name) { $cfg.$Name = $dest }
+        else { $cfg | Add-Member -NotePropertyName $Name -NotePropertyValue $dest }
+        Save-Config $cfg
+        return $dest
+    }
+
     return $null
 }
 
@@ -227,16 +259,59 @@ function Detect-UrlType {
     return 'unknown'
 }
 
-$ytdlp  = Find-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
-$ffmpeg = Find-Tool -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
+# Télécharge automatiquement yt-dlp et ffmpeg si absents (dans Program Files\yt-grab\)
+# Un splash minimaliste pour ne pas laisser l'utilisateur devant une fenêtre vide
+$splashNeeded = $false
+$cfgCheck = Read-Config
+$ytdlpInApp  = Join-Path $scriptDir 'yt-dlp.exe'
+$ffmpegInApp = Join-Path $scriptDir 'ffmpeg.exe'
+if ((-not (Test-Path $ytdlpInApp)) -or (-not (Test-Path $ffmpegInApp))) {
+    $splashNeeded = $true
+}
+
+if ($splashNeeded) {
+    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+    $splash = New-Object System.Windows.Forms.Form
+    $splash.Text = $AppName
+    $splash.Size = New-Object System.Drawing.Size(420, 110)
+    $splash.StartPosition = 'CenterScreen'
+    $splash.FormBorderStyle = 'FixedSingle'
+    $splash.MaximizeBox = $false
+    $splash.MinimizeBox = $false
+    $splash.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 22)
+    $splashLbl = New-Object System.Windows.Forms.Label
+    $splashLbl.Text = "Premier lancement — telechargement des outils en cours..."
+    $splashLbl.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
+    $splashLbl.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $splashLbl.Location = New-Object System.Drawing.Point(20, 20)
+    $splashLbl.AutoSize = $true
+    $splash.Controls.Add($splashLbl)
+    $splashBar = New-Object System.Windows.Forms.ProgressBar
+    $splashBar.Location = New-Object System.Drawing.Point(20, 50)
+    $splashBar.Size = New-Object System.Drawing.Size(370, 10)
+    $splashBar.Style = 'Marquee'
+    $splashBar.MarqueeAnimationSpeed = 30
+    $splash.Controls.Add($splashBar)
+    $splash.Show()
+    $splash.Refresh()
+}
+
+$ytdlp  = Ensure-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
+$ffmpeg = Ensure-Tool -Name 'ffmpeg'  -ExeName 'ffmpeg.exe'
+
+if ($splashNeeded) {
+    try { $splash.Close(); $splash.Dispose() } catch {}
+}
 
 if (-not $ytdlp) {
-    [System.Windows.Forms.MessageBox]::Show("yt-dlp.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", $AppName, 'OK', 'Information') | Out-Null
-    $ytdlp = Prompt-ToolPath -Name 'yt-dlp' -ExeName 'yt-dlp.exe'
+    [System.Windows.Forms.MessageBox]::Show(
+        "Impossible de telecharger yt-dlp.exe automatiquement.`nVerifie ta connexion internet ou telecharge-le manuellement depuis https://github.com/yt-dlp/yt-dlp/releases et place-le dans :`n$scriptDir",
+        $AppName, 'OK', 'Error') | Out-Null
 }
 if (-not $ffmpeg) {
-    [System.Windows.Forms.MessageBox]::Show("ffmpeg.exe introuvable. Localise-le dans la fenetre suivante (le chemin sera memorise).", $AppName, 'OK', 'Information') | Out-Null
-    $ffmpeg = Prompt-ToolPath -Name 'ffmpeg' -ExeName 'ffmpeg.exe'
+    [System.Windows.Forms.MessageBox]::Show(
+        "Impossible de telecharger ffmpeg.exe automatiquement.`nVerifie ta connexion internet ou telecharge-le manuellement depuis https://ffmpeg.org/download.html et place-le dans :`n$scriptDir",
+        $AppName, 'OK', 'Error') | Out-Null
 }
 
 # Dossier de destination : dernier dossier mémorisé, sinon Téléchargements Windows

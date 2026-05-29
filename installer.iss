@@ -9,7 +9,7 @@
 
 #define AppName      "My YouTube Downloader"
 #define AppShortName "yt-grab"
-#define AppVersion   "1.3.0"
+#define AppVersion   "1.4.0"
 #define AppPublisher "n3lio"
 #define AppURL       "https://github.com/n3lio/yt-grab"
 #define AppExe       "yt-grab.exe"
