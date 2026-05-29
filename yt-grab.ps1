@@ -2,33 +2,28 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-
-# Le exe compile (-NoConsole) n'a pas de console ; on tente l'UTF-8 mais on
-# ignore si ca echoue.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-# ----------------- App metadata (mettre à jour à chaque release) -----------------
-
+# ================================================================
+#  App metadata
+# ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '1.4.1'
+$AppVersion = '2.0.0'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
-# Quand on tourne en exe (PS2EXE), $MyInvocation.MyCommand.Path peut etre vide.
-# Fallback : repertoire de l'exe lui-meme.
+# scriptDir — robuste en mode exe PS2EXE
 $scriptDir = $null
-try {
-    if ($MyInvocation.MyCommand.Path) {
-        $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-    }
-} catch {}
-if (-not $scriptDir) {
-    try { $scriptDir = [System.IO.Path]::GetDirectoryName([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) } catch {}
-}
+try { if ($MyInvocation.MyCommand.Path) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path } } catch {}
+if (-not $scriptDir) { try { $scriptDir = [System.IO.Path]::GetDirectoryName([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) } catch {} }
 if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
 
-$crashLog = Join-Path $scriptDir 'yt-grab-crash.log'
+$crashLog   = Join-Path $scriptDir 'ytgrabber-crash.log'
+$configFile = Join-Path $scriptDir 'ytgrabber.config.json'
 
+# ================================================================
+#  Crash log
+# ================================================================
 function Write-Crash {
     param([string]$Where, $ErrObj)
     try {
@@ -36,136 +31,122 @@ function Write-Crash {
         if ($ErrObj) {
             $msg += ($ErrObj | Out-String)
             if ($ErrObj.ScriptStackTrace) { $msg += "`n$($ErrObj.ScriptStackTrace)`n" }
-            if ($ErrObj.Exception) { $msg += "`n$($ErrObj.Exception.ToString())`n" }
+            if ($ErrObj.Exception)        { $msg += "`n$($ErrObj.Exception.ToString())`n" }
         }
         $msg += "`n----`n"
         Add-Content -Path $crashLog -Value $msg -Encoding UTF8 -ErrorAction SilentlyContinue
     } catch {}
 }
 
-try {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-} catch {
-    [System.Windows.Forms.MessageBox]::Show("Echec du chargement WinForms : $($_.Exception.Message)", 'yt-grab', 'OK', 'Error') | Out-Null
-    Write-Crash -Where 'Add-Type' -ErrObj $_
-    return
-}
-
-$configFile = Join-Path $scriptDir 'yt-grab.config.json'
-
+# ================================================================
+#  Config JSON
+# ================================================================
 function Read-Config {
     if (Test-Path $configFile) {
-        try { return Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+        try { return Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
     }
-    return $null
+    return [PSCustomObject]@{}
 }
 
 function Save-Config {
-    param($Config)
-    $Config | ConvertTo-Json | Set-Content -Path $configFile -Encoding UTF8
+    param($Cfg)
+    try { $Cfg | ConvertTo-Json -Depth 5 | Set-Content -Path $configFile -Encoding UTF8 } catch {}
 }
 
-# Cherche un outil, et si introuvable le télécharge automatiquement dans $scriptDir.
-# Retourne le chemin complet ou $null si échec.
+function Get-CfgProp {
+    param($Cfg, [string]$Name, $Default = $null)
+    if ($Cfg -and ($Cfg.PSObject.Properties.Name -contains $Name) -and $null -ne $Cfg.$Name) { return $Cfg.$Name }
+    return $Default
+}
+
+function Set-CfgProp {
+    param($Cfg, [string]$Name, $Value)
+    if ($Cfg.PSObject.Properties.Name -contains $Name) { $Cfg.$Name = $Value }
+    else { $Cfg | Add-Member -NotePropertyName $Name -NotePropertyValue $Value }
+}
+
+# ================================================================
+#  Ensure-Tool : trouve ou télécharge yt-dlp / ffmpeg
+# ================================================================
 function Ensure-Tool {
     param([string]$Name, [string]$ExeName)
+    $cfg = Read-Config
+    $saved = Get-CfgProp $cfg $Name
+    if ($saved -and (Test-Path $saved)) { return $saved }
 
-    # 1. Config mémorisée
-    $config = Read-Config
-    if ($config -and $config.$Name -and (Test-Path $config.$Name)) { return $config.$Name }
-
-    # 2. Dans le dossier de l'app en premier (Program Files\yt-grab\)
     $inApp = Join-Path $scriptDir $ExeName
     if (Test-Path $inApp) { return $inApp }
 
-    # 3. Dans le PATH système
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    $sys = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($sys) { return $sys.Source }
 
-    # 4. Scan rapide des emplacements courants (cas où l'utilisateur l'avait déjà)
-    $roots = @(
+    foreach ($root in @(
         (Join-Path $env:USERPROFILE 'Downloads'),
         (Join-Path $env:USERPROFILE 'Downloads\yt-dlp'),
         (Join-Path $env:USERPROFILE 'Downloads\ffmpeg\bin'),
-        'C:\ffmpeg\bin',
-        'C:\Program Files\ffmpeg\bin'
-    )
-    foreach ($root in $roots) {
-        $candidate = Join-Path $root $ExeName
-        if (Test-Path $candidate) {
-            # Trouvé ailleurs — on le mémorise dans la config
-            $cfg = Read-Config
-            if (-not $cfg) { $cfg = [PSCustomObject]@{} }
-            if ($cfg.PSObject.Properties.Name -contains $Name) { $cfg.$Name = $candidate }
-            else { $cfg | Add-Member -NotePropertyName $Name -NotePropertyValue $candidate }
-            Save-Config $cfg
-            return $candidate
+        'C:\ffmpeg\bin', 'C:\Program Files\ffmpeg\bin')) {
+        $c = Join-Path $root $ExeName
+        if (Test-Path $c) {
+            Set-CfgProp $cfg $Name $c; Save-Config $cfg
+            return $c
         }
     }
 
-    # 5. Pas trouvé → téléchargement automatique dans $scriptDir
+    # Téléchargement automatique
     $dest = Join-Path $scriptDir $ExeName
     $ok   = $false
-
     try {
         if ($Name -eq 'yt-dlp') {
-            # GitHub Releases : yt-dlp/yt-dlp — asset yt-dlp.exe
-            $apiUrl  = 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest'
-            $release = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
-            $asset   = $release.assets | Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -First 1
-            if (-not $asset) { throw 'Asset yt-dlp.exe introuvable dans la release.' }
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+            $rel   = Invoke-RestMethod 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -UseBasicParsing -TimeoutSec 20
+            $asset = $rel.assets | Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -First 1
+            Invoke-WebRequest $asset.browser_download_url -OutFile $dest -UseBasicParsing
             $ok = $true
+        } elseif ($Name -eq 'ffmpeg') {
+            $zip = Join-Path $env:TEMP 'ffmpeg-dl.zip'
+            $ext = Join-Path $env:TEMP 'ffmpeg-ext'
+            Invoke-WebRequest 'https://github.com/GyanD/codexffmpeg/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip' -OutFile $zip -UseBasicParsing
+            Expand-Archive $zip $ext -Force
+            $found = Get-ChildItem $ext -Filter 'ffmpeg.exe' -Recurse | Select-Object -First 1
+            if ($found) { Copy-Item $found.FullName $dest -Force; $ok = $true }
+            Remove-Item $zip,$ext -Recurse -Force -ErrorAction SilentlyContinue
         }
-        elseif ($Name -eq 'ffmpeg') {
-            # On télécharge ffmpeg-master-latest-win64-gpl.zip depuis gyan.dev (build statique officielle)
-            $zipUrl  = 'https://github.com/GyanD/codexffmpeg/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip'
-            $zipDest = Join-Path $env:TEMP 'ffmpeg-latest.zip'
-            $extract = Join-Path $env:TEMP 'ffmpeg-extract'
-            Invoke-WebRequest -Uri $zipUrl -OutFile $zipDest -UseBasicParsing -ErrorAction Stop
-            Expand-Archive -Path $zipDest -DestinationPath $extract -Force
-            # Le zip contient un sous-dossier ffmpeg-xxx/bin/ffmpeg.exe
-            $found = Get-ChildItem -Path $extract -Filter 'ffmpeg.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $found) { throw 'ffmpeg.exe introuvable dans le zip.' }
-            Copy-Item $found.FullName $dest -Force
-            Remove-Item $zipDest -Force -ErrorAction SilentlyContinue
-            Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
-            $ok = $true
-        }
-    } catch {
-        Write-Crash -Where "Ensure-Tool:download:$Name" -ErrObj $_
-    }
+    } catch { Write-Crash "Ensure-Tool:$Name" $_ }
 
     if ($ok -and (Test-Path $dest)) {
-        # Mémorise le chemin
-        $cfg = Read-Config
-        if (-not $cfg) { $cfg = [PSCustomObject]@{} }
-        if ($cfg.PSObject.Properties.Name -contains $Name) { $cfg.$Name = $dest }
-        else { $cfg | Add-Member -NotePropertyName $Name -NotePropertyValue $dest }
-        Save-Config $cfg
+        Set-CfgProp $cfg $Name $dest; Save-Config $cfg
         return $dest
     }
-
     return $null
 }
 
+# ================================================================
+#  Update yt-dlp
+# ================================================================
+function Update-YtDlp {
+    param([string]$YtDlpPath)
+    try {
+        $rel     = Invoke-RestMethod 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -UseBasicParsing -TimeoutSec 15
+        $asset   = $rel.assets | Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -First 1
+        $tmpDest = $YtDlpPath + '.new'
+        Invoke-WebRequest $asset.browser_download_url -OutFile $tmpDest -UseBasicParsing
+        Move-Item $tmpDest $YtDlpPath -Force
+        return $rel.tag_name
+    } catch { Write-Crash 'Update-YtDlp' $_; return $null }
+}
+
+# ================================================================
+#  Helpers
+# ================================================================
 function Quote-Arg {
-    param([string]$Arg)
-    if ($Arg -match '[\s"&|<>^()%]') {
-        $escaped = $Arg -replace '"', '\"'
-        return '"' + $escaped + '"'
-    }
-    return $Arg
+    param([string]$A)
+    if ($A -match '[\s"&|<>^()%]') { return '"' + ($A -replace '"','\"') + '"' }
+    return $A
 }
 
 function Clean-YouTubeUrl {
-    # NB: ne pas nommer le parametre $Input — c'est une variable automatique
-    # reservee par PowerShell, le binding casse en exe compile.
     param([string]$RawUrl)
     if (-not $RawUrl) { return '' }
     $s = $RawUrl.Trim()
-
     $patterns = @(
         'https?://(?:www\.|m\.)?youtube\.com/watch\?[^\s"<>]+',
         'https?://(?:www\.|m\.)?youtube\.com/playlist\?[^\s"<>]+',
@@ -173,64 +154,46 @@ function Clean-YouTubeUrl {
         'https?://(?:www\.|m\.)?youtube\.com/embed/[A-Za-z0-9_-]+',
         'https?://youtu\.be/[A-Za-z0-9_-]+(?:\?[^\s"<>]*)?'
     )
-
     $matched = $null
     foreach ($p in $patterns) {
         $m = [regex]::Match($s, $p, 'IgnoreCase')
         if ($m.Success) { $matched = $m.Value; break }
     }
     if (-not $matched) { return $s }
-
-    try {
-        $uri = [System.Uri]$matched
-    } catch {
-        return $matched
-    }
-
-    # NB: ne pas nommer cette variable $host — reservee par PowerShell aussi.
+    try { $uri = [System.Uri]$matched } catch { return $matched }
     $uriHost = $uri.Host.ToLower()
-    $path = $uri.AbsolutePath
-    $query = @{}
+    $path    = $uri.AbsolutePath
+    $query   = @{}
     if ($uri.Query) {
         foreach ($kv in $uri.Query.TrimStart('?').Split('&')) {
             if (-not $kv) { continue }
-            $parts = $kv.Split('=', 2)
-            $k = $parts[0]
-            $v = if ($parts.Count -gt 1) { $parts[1] } else { '' }
-            $query[$k] = $v
+            $pts = $kv.Split('=',2); $query[$pts[0]] = if ($pts.Count -gt 1) { $pts[1] } else { '' }
         }
     }
-
     if ($uriHost -like '*youtu.be*') {
-        $videoId = $path.TrimStart('/').Split('/')[0]
-        if (-not $videoId) { return $matched }
-        if ($query.ContainsKey('list')) {
-            return "https://www.youtube.com/watch?v=$videoId&list=$($query['list'])"
-        }
-        return "https://www.youtube.com/watch?v=$videoId"
+        $vid = $path.TrimStart('/').Split('/')[0]
+        if (-not $vid) { return $matched }
+        return if ($query.ContainsKey('list')) { "https://www.youtube.com/watch?v=$vid&list=$($query['list'])" } else { "https://www.youtube.com/watch?v=$vid" }
     }
-
     if ($path -eq '/watch') {
         if (-not $query.ContainsKey('v')) { return $matched }
-        $clean = "https://www.youtube.com/watch?v=$($query['v'])"
-        if ($query.ContainsKey('list')) { $clean += "&list=$($query['list'])" }
-        return $clean
+        $c = "https://www.youtube.com/watch?v=$($query['v'])"
+        if ($query.ContainsKey('list')) { $c += "&list=$($query['list'])" }
+        return $c
     }
-
-    if ($path -eq '/playlist') {
-        if ($query.ContainsKey('list')) { return "https://www.youtube.com/playlist?list=$($query['list'])" }
-        return $matched
-    }
-
-    if ($path -like '/shorts/*') {
-        $videoId = $path.Substring('/shorts/'.Length).Split('/')[0]
-        return "https://www.youtube.com/shorts/$videoId"
-    }
-
+    if ($path -eq '/playlist') { return if ($query.ContainsKey('list')) { "https://www.youtube.com/playlist?list=$($query['list'])" } else { $matched } }
+    if ($path -like '/shorts/*') { return "https://www.youtube.com/shorts/$($path.Substring('/shorts/'.Length).Split('/')[0])" }
     return $matched
 }
 
-# Compare deux versions semver. Retourne -1, 0 ou 1.
+function Detect-UrlType {
+    param([string]$Url)
+    if (-not $Url) { return 'unknown' }
+    if ($Url -match 'youtube\.com/playlist\?') { return 'playlist' }
+    if ($Url -match 'youtu\.be/|youtube\.com/shorts/|youtube\.com/watch\?') { return 'video' }
+    return 'unknown'
+}
+
 function Compare-Version {
     param([string]$Va, [string]$Vb)
     $a = $Va.TrimStart('v').Split('.') | ForEach-Object { try { [int]$_ } catch { 0 } }
@@ -239,684 +202,1036 @@ function Compare-Version {
     for ($i = 0; $i -lt $len; $i++) {
         $na = if ($i -lt $a.Count) { $a[$i] } else { 0 }
         $nb = if ($i -lt $b.Count) { $b[$i] } else { 0 }
-        if ($na -lt $nb) { return -1 }
-        if ($na -gt $nb) { return 1 }
+        if ($na -lt $nb) { return -1 }; if ($na -gt $nb) { return 1 }
     }
     return 0
 }
 
-# Retourne 'playlist', 'video' ou 'unknown' a partir d'une URL brute
-function Detect-UrlType {
-    param([string]$Url)
-    if (-not $Url) { return 'unknown' }
-    $u = $Url.Trim()
-    if ($u -match 'youtube\.com/playlist\?') { return 'playlist' }
-    if ($u -match 'youtu\.be/|youtube\.com/shorts/') { return 'video' }
-    if ($u -match 'youtube\.com/watch\?') {
-        # watch?v=xxx&list=yyy → vidéo (appartient à une playlist mais on dl la vidéo)
-        return 'video'
-    }
-    return 'unknown'
+# ================================================================
+#  Assemblies WPF
+# ================================================================
+try {
+    Add-Type -AssemblyName PresentationFramework
+    Add-Type -AssemblyName PresentationCore
+    Add-Type -AssemblyName WindowsBase
+    Add-Type -AssemblyName System.Windows.Forms   # pour FolderBrowserDialog + Toast
+    Add-Type -AssemblyName System.Drawing
+} catch {
+    [System.Windows.MessageBox]::Show("Erreur chargement WPF : $($_.Exception.Message)")
+    Write-Crash 'Add-Type' $_; return
 }
 
-# Télécharge automatiquement yt-dlp et ffmpeg si absents (dans Program Files\yt-grab\)
-# Un splash minimaliste pour ne pas laisser l'utilisateur devant une fenêtre vide
-$splashNeeded = $false
-$cfgCheck = Read-Config
-$ytdlpInApp  = Join-Path $scriptDir 'yt-dlp.exe'
-$ffmpegInApp = Join-Path $scriptDir 'ffmpeg.exe'
+# ================================================================
+#  Splash "premier lancement"
+# ================================================================
+$cfg0         = Read-Config
+$ytdlpInApp   = Join-Path $scriptDir 'yt-dlp.exe'
+$ffmpegInApp  = Join-Path $scriptDir 'ffmpeg.exe'
+
 if ((-not (Test-Path $ytdlpInApp)) -or (-not (Test-Path $ffmpegInApp))) {
-    $splashNeeded = $true
-}
-
-if ($splashNeeded) {
-    Add-Type -AssemblyName System.Windows.Forms | Out-Null
-    $splash = New-Object System.Windows.Forms.Form
-    $splash.Text = $AppName
-    $splash.Size = New-Object System.Drawing.Size(420, 110)
-    $splash.StartPosition = 'CenterScreen'
-    $splash.FormBorderStyle = 'FixedSingle'
-    $splash.MaximizeBox = $false
-    $splash.MinimizeBox = $false
-    $splash.BackColor = [System.Drawing.Color]::FromArgb(18, 18, 22)
-    $splashLbl = New-Object System.Windows.Forms.Label
-    $splashLbl.Text = "Premier lancement — telechargement des outils en cours..."
-    $splashLbl.ForeColor = [System.Drawing.Color]::FromArgb(180, 180, 200)
-    $splashLbl.Font = New-Object System.Drawing.Font('Segoe UI', 9)
-    $splashLbl.Location = New-Object System.Drawing.Point(20, 20)
-    $splashLbl.AutoSize = $true
-    $splash.Controls.Add($splashLbl)
-    $splashBar = New-Object System.Windows.Forms.ProgressBar
-    $splashBar.Location = New-Object System.Drawing.Point(20, 50)
-    $splashBar.Size = New-Object System.Drawing.Size(370, 10)
-    $splashBar.Style = 'Marquee'
-    $splashBar.MarqueeAnimationSpeed = 30
-    $splash.Controls.Add($splashBar)
-    $splash.Show()
-    $splash.Refresh()
+    $splashXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        Title="YouTube Grabber" Height="130" Width="440"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        WindowStyle="None" Background="#12121A" AllowsTransparency="True">
+  <Border CornerRadius="12" Background="#12121A" BorderBrush="#3434A0" BorderThickness="1">
+    <StackPanel VerticalAlignment="Center" Margin="28,20">
+      <TextBlock Text="YouTube Grabber" Foreground="#6366F1" FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"/>
+      <TextBlock Text="Premier lancement — telechargement des outils..." Foreground="#9090B0" FontFamily="Segoe UI" FontSize="10" Margin="0,8,0,12"/>
+      <ProgressBar IsIndeterminate="True" Height="4" Background="#1E1E2E" Foreground="#6366F1"/>
+    </StackPanel>
+  </Border>
+</Window>
+'@
+    $splashWin = [Windows.Markup.XamlReader]::Parse($splashXaml)
+    $splashWin.Show()
+    $splashWin.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Background)
 }
 
 $ytdlp  = Ensure-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
 $ffmpeg = Ensure-Tool -Name 'ffmpeg'  -ExeName 'ffmpeg.exe'
 
-if ($splashNeeded) {
-    try { $splash.Close(); $splash.Dispose() } catch {}
-}
+if ($splashWin) { try { $splashWin.Close() } catch {} }
 
-if (-not $ytdlp) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "Impossible de telecharger yt-dlp.exe automatiquement.`nVerifie ta connexion internet ou telecharge-le manuellement depuis https://github.com/yt-dlp/yt-dlp/releases et place-le dans :`n$scriptDir",
-        $AppName, 'OK', 'Error') | Out-Null
-}
-if (-not $ffmpeg) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "Impossible de telecharger ffmpeg.exe automatiquement.`nVerifie ta connexion internet ou telecharge-le manuellement depuis https://ffmpeg.org/download.html et place-le dans :`n$scriptDir",
-        $AppName, 'OK', 'Error') | Out-Null
-}
+# ================================================================
+#  Config initiale
+# ================================================================
+$cfg0        = Read-Config
+$defaultOut  = Get-CfgProp $cfg0 'lastFolder' (Join-Path $env:USERPROFILE 'Downloads')
+if (-not (Test-Path $defaultOut)) { $defaultOut = Join-Path $env:USERPROFILE 'Downloads' }
 
-# Dossier de destination : dernier dossier mémorisé, sinon Téléchargements Windows
-$windowsDownloads = Join-Path $env:USERPROFILE 'Downloads'
-$cfg0 = Read-Config
-$defaultOut = $windowsDownloads
-if ($cfg0 -and ($cfg0.PSObject.Properties.Name -contains 'lastFolder') -and $cfg0.lastFolder -and (Test-Path $cfg0.lastFolder)) {
-    $defaultOut = $cfg0.lastFolder
-}
-
-# Historique (10 dernières URLs)
 $historyList = New-Object System.Collections.Generic.List[string]
-if ($cfg0 -and ($cfg0.PSObject.Properties.Name -contains 'history') -and $cfg0.history) {
-    foreach ($h in $cfg0.history) { if ($h) { $historyList.Add($h) } }
-}
+$h0 = Get-CfgProp $cfg0 'history' @()
+foreach ($h in $h0) { if ($h) { $historyList.Add($h) } }
 
 function Save-HistoryUrl {
     param([string]$Url)
     $historyList.Remove($Url) | Out-Null
     $historyList.Insert(0, $Url)
     while ($historyList.Count -gt 10) { $historyList.RemoveAt($historyList.Count - 1) }
-    $cfgHist = Read-Config
-    if (-not $cfgHist) { $cfgHist = [PSCustomObject]@{} }
-    $arr = $historyList.ToArray()
-    if ($cfgHist.PSObject.Properties.Name -contains 'history') { $cfgHist.history = $arr }
-    else { $cfgHist | Add-Member -NotePropertyName 'history' -NotePropertyValue $arr }
-    Save-Config $cfgHist
+    $c = Read-Config
+    Set-CfgProp $c 'history' $historyList.ToArray()
+    Save-Config $c
 }
 
-# ----------------- Auto-update check (GitHub Releases, non bloquant) -----------------
-# On lance un Job PowerShell en parallele ; le Timer principal le pollera.
-$script:updateJob = $null
-$script:updateAvailable = $null   # sera rempli par le timer si update trouve
+# ================================================================
+#  Jobs background : app-update + yt-dlp version check
+# ================================================================
+$script:updateJob    = $null
+$script:ytdlpVerJob  = $null
+$script:updateAvail  = $null
+
 try {
     $script:updateJob = Start-Job -ScriptBlock {
-        param($repo, $current)
+        param($repo)
         try {
-            $url = "https://api.github.com/repos/$repo/releases/latest"
-            $resp = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 6 -ErrorAction Stop
-            $latest = $resp.tag_name
-            $dl     = ($resp.assets | Where-Object { $_.name -like '*-setup.exe' } | Select-Object -First 1).browser_download_url
-            if (-not $dl) { $dl = $resp.html_url }
-            return [PSCustomObject]@{ Latest = $latest; DownloadUrl = $dl }
-        } catch {
-            return $null
-        }
-    } -ArgumentList 'n3lio/yt-grab', $AppVersion
+            $r = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -UseBasicParsing -TimeoutSec 8
+            $dl = ($r.assets | Where-Object { $_.name -like '*-setup.exe' } | Select-Object -First 1).browser_download_url
+            if (-not $dl) { $dl = $r.html_url }
+            return [PSCustomObject]@{ Tag = $r.tag_name; Url = $dl }
+        } catch { return $null }
+    } -ArgumentList 'n3lio/yt-grab'
 } catch {}
 
-# ----------------- Palette dark -----------------
-# Couleurs définies une seule fois, référencées partout
-$cBg       = [System.Drawing.Color]::FromArgb(18,  18,  22)   # fond fenêtre
-$cSurface  = [System.Drawing.Color]::FromArgb(28,  28,  34)   # groupbox / textbox
-$cBorder   = [System.Drawing.Color]::FromArgb(52,  52,  64)   # bords discrets
-$cText     = [System.Drawing.Color]::FromArgb(220, 220, 228)   # texte principal
-$cMuted    = [System.Drawing.Color]::FromArgb(110, 110, 130)   # labels secondaires
-$cAccent   = [System.Drawing.Color]::FromArgb(99,  102, 241)   # indigo vif (bouton go)
-$cAccentHo = [System.Drawing.Color]::FromArgb(129, 132, 255)   # hover accent
-$cDanger   = [System.Drawing.Color]::FromArgb(248, 81,  73)    # rouge annuler
-$cOk       = [System.Drawing.Color]::FromArgb(63,  185, 80)    # vert succès
-$cWarn     = [System.Drawing.Color]::FromArgb(229, 151, 0)     # orange update
-
-# Helper : applique le style dark à un GroupBox et ses enfants
-function Style-GroupBox {
-    param($Grp)
-    $Grp.ForeColor = $cMuted
-    $Grp.BackColor = $cSurface
-    foreach ($ctrl in $Grp.Controls) {
-        $ctrl.BackColor = $cSurface
-        $ctrl.ForeColor = $cText
+try {
+    $script:ytdlpVerJob = Start-Job -ScriptBlock {
+        try {
+            $r = Invoke-RestMethod 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -UseBasicParsing -TimeoutSec 8
+            return $r.tag_name
+        } catch { return $null }
     }
+} catch {}
+
+# ================================================================
+#  Queue item class
+# ================================================================
+Add-Type @'
+using System.ComponentModel;
+public class QueueItem : INotifyPropertyChanged {
+    private string _url;
+    private string _title;
+    private string _status;
+    private int    _progress;
+    private string _format;
+
+    public string Url      { get { return _url; }      set { _url = value;      OnChanged("Url"); } }
+    public string Title    { get { return _title; }    set { _title = value;    OnChanged("Title"); } }
+    public string Status   { get { return _status; }   set { _status = value;   OnChanged("Status"); } }
+    public int    Progress { get { return _progress; } set { _progress = value; OnChanged("Progress"); } }
+    public string Format   { get { return _format; }   set { _format = value;   OnChanged("Format"); } }
+
+    public event PropertyChangedEventHandler PropertyChanged;
+    protected void OnChanged(string n) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(n)); }
+}
+'@
+
+$queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[QueueItem]
+
+# ================================================================
+#  XAML principal
+# ================================================================
+[xml]$xaml = @'
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="YouTube Grabber by n3lio"
+    Width="780" Height="560" MinWidth="700" MinHeight="480"
+    WindowStartupLocation="CenterScreen"
+    Background="#0E0E16"
+    FontFamily="Segoe UI"
+    WindowStyle="None"
+    AllowsTransparency="True"
+    ResizeMode="CanResizeWithGrip">
+
+  <Window.Resources>
+    <!-- Couleurs globales -->
+    <SolidColorBrush x:Key="BrBg"        Color="#0E0E16"/>
+    <SolidColorBrush x:Key="BrSurface"   Color="#1A1A28"/>
+    <SolidColorBrush x:Key="BrCard"      Color="#1E1E30"/>
+    <SolidColorBrush x:Key="BrBorder"    Color="#2E2E4A"/>
+    <SolidColorBrush x:Key="BrAccent"    Color="#6366F1"/>
+    <SolidColorBrush x:Key="BrAccentHov" Color="#818CF8"/>
+    <SolidColorBrush x:Key="BrText"      Color="#E8E8F0"/>
+    <SolidColorBrush x:Key="BrMuted"     Color="#6B6B8A"/>
+    <SolidColorBrush x:Key="BrOk"        Color="#3FB950"/>
+    <SolidColorBrush x:Key="BrDanger"    Color="#F85149"/>
+    <SolidColorBrush x:Key="BrWarn"      Color="#E59700"/>
+
+    <!-- Style bouton principal (accent) -->
+    <Style x:Key="BtnPrimary" TargetType="Button">
+      <Setter Property="Background"   Value="#6366F1"/>
+      <Setter Property="Foreground"   Value="White"/>
+      <Setter Property="FontWeight"   Value="SemiBold"/>
+      <Setter Property="FontSize"     Value="13"/>
+      <Setter Property="Padding"      Value="18,0"/>
+      <Setter Property="Height"       Value="38"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Cursor"       Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="8" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#818CF8"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#4F52D4"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Background" Value="#2E2E4A"/>
+                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Style bouton secondaire -->
+    <Style x:Key="BtnSecondary" TargetType="Button">
+      <Setter Property="Background"      Value="#1E1E30"/>
+      <Setter Property="Foreground"      Value="#C0C0D8"/>
+      <Setter Property="FontSize"        Value="12"/>
+      <Setter Property="Padding"         Value="14,0"/>
+      <Setter Property="Height"          Value="34"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush"     Value="#2E2E4A"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#28283E"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="#4A4A6A"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#14141E"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Style bouton danger -->
+    <Style x:Key="BtnDanger" TargetType="Button" BasedOn="{StaticResource BtnSecondary}">
+      <Setter Property="Foreground"  Value="#F85149"/>
+      <Setter Property="BorderBrush" Value="#F85149"/>
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#2A1414"/>
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- TextBox dark -->
+    <Style x:Key="TxtDark" TargetType="TextBox">
+      <Setter Property="Background"       Value="#1E1E30"/>
+      <Setter Property="Foreground"       Value="#E8E8F0"/>
+      <Setter Property="CaretBrush"       Value="#6366F1"/>
+      <Setter Property="BorderBrush"      Value="#2E2E4A"/>
+      <Setter Property="BorderThickness"  Value="1"/>
+      <Setter Property="Padding"          Value="10,6"/>
+      <Setter Property="FontSize"         Value="12"/>
+      <Setter Property="SelectionBrush"   Value="#6366F1"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}">
+              <ScrollViewer x:Name="PART_ContentHost"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsFocused" Value="True">
+                <Setter TargetName="bd" Property="BorderBrush" Value="#6366F1"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- ComboBox dark -->
+    <Style x:Key="CmbDark" TargetType="ComboBox">
+      <Setter Property="Background"      Value="#1E1E30"/>
+      <Setter Property="Foreground"      Value="#E8E8F0"/>
+      <Setter Property="BorderBrush"     Value="#2E2E4A"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding"         Value="10,6"/>
+      <Setter Property="FontSize"        Value="12"/>
+    </Style>
+
+    <!-- ProgressBar dark -->
+    <Style x:Key="PrgDark" TargetType="ProgressBar">
+      <Setter Property="Background" Value="#1E1E30"/>
+      <Setter Property="Foreground" Value="#6366F1"/>
+      <Setter Property="Height"     Value="6"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ProgressBar">
+            <Border CornerRadius="3" Background="{TemplateBinding Background}" ClipToBounds="True">
+              <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left"
+                      Background="{TemplateBinding Foreground}"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- ScrollBar minimaliste -->
+    <Style TargetType="ScrollBar">
+      <Setter Property="Width"      Value="6"/>
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <!-- RadioButton dark -->
+    <Style x:Key="RdoDark" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="#C0C0D8"/>
+      <Setter Property="FontSize"   Value="12"/>
+      <Setter Property="Margin"     Value="0,0,18,0"/>
+      <Setter Property="Cursor"     Value="Hand"/>
+    </Style>
+
+    <!-- CheckBox dark -->
+    <Style x:Key="ChkDark" TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#C0C0D8"/>
+      <Setter Property="FontSize"   Value="12"/>
+      <Setter Property="Margin"     Value="0,0,18,0"/>
+      <Setter Property="Cursor"     Value="Hand"/>
+    </Style>
+  </Window.Resources>
+
+  <!-- Fenêtre avec bord arrondi et drag -->
+  <Border CornerRadius="12" Background="#0E0E16" BorderBrush="#2E2E4A" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="42"/>   <!-- title bar -->
+        <RowDefinition Height="*"/>    <!-- contenu -->
+        <RowDefinition Height="Auto"/> <!-- status bar -->
+      </Grid.RowDefinitions>
+
+      <!-- ===== TITLE BAR ===== -->
+      <Border Grid.Row="0" CornerRadius="12,12,0,0" Background="#12121E" x:Name="TitleBar">
+        <Grid Margin="16,0">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse Width="10" Height="10" Fill="#6366F1" Margin="0,0,8,0"/>
+            <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtVersion" Text=" v2.0.0" Foreground="#4A4A6A" FontSize="11" VerticalAlignment="Center"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+            <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="10"
+                       VerticalAlignment="Center" Margin="0,0,12,0" Cursor="Hand"/>
+            <Button x:Name="BtnAbout"    Content="?"  Width="26" Height="26" Style="{StaticResource BtnSecondary}" FontWeight="Bold" Margin="0,0,6,0"/>
+            <Button x:Name="BtnMinimize" Content="─"  Width="26" Height="26" Style="{StaticResource BtnSecondary}" Margin="0,0,6,0"/>
+            <Button x:Name="BtnClose"    Content="✕"  Width="26" Height="26" Style="{StaticResource BtnDanger}"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <!-- ===== CONTENU ===== -->
+      <Grid Grid.Row="1" Margin="20,14,20,14">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>  <!-- URL -->
+          <RowDefinition Height="Auto"/>  <!-- Preview card -->
+          <RowDefinition Height="Auto"/>  <!-- Options -->
+          <RowDefinition Height="Auto"/>  <!-- Destination + actions -->
+          <RowDefinition Height="Auto"/>  <!-- Boutons -->
+          <RowDefinition Height="*"/>     <!-- Queue -->
+        </Grid.RowDefinitions>
+
+        <!-- URL + historique -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <ComboBox x:Name="CmbUrl" Grid.Column="0" Height="38" Style="{StaticResource CmbDark}"
+                    IsEditable="True" Margin="0,0,8,0"
+                    Text="" FontSize="12"/>
+          <Button x:Name="BtnAddQueue" Grid.Column="1" Content="+ Ajouter" Style="{StaticResource BtnPrimary}"
+                  Width="100" Height="38"/>
+        </Grid>
+
+        <!-- Preview card (masqué par défaut) -->
+        <Border Grid.Row="1" x:Name="PreviewCard" CornerRadius="9" Background="#1A1A28"
+                BorderBrush="#2E2E4A" BorderThickness="1" Margin="0,0,0,10"
+                Visibility="Collapsed">
+          <Grid Margin="12,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="100"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" CornerRadius="6" ClipToBounds="True" Width="100" Height="60">
+              <Image x:Name="ImgThumb" Stretch="UniformToFill"/>
+            </Border>
+            <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+              <TextBlock x:Name="TxtPreviewTitle"    Foreground="#E8E8F0" FontSize="12" FontWeight="SemiBold"
+                         TextTrimming="CharacterEllipsis" MaxWidth="500"/>
+              <TextBlock x:Name="TxtPreviewChannel"  Foreground="#6B6B8A" FontSize="10" Margin="0,3,0,0"/>
+              <TextBlock x:Name="TxtPreviewDuration" Foreground="#6B6B8A" FontSize="10" Margin="0,2,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="TxtPreviewLoading" Grid.ColumnSpan="2" Text="Chargement preview..."
+                       Foreground="#4A4A6A" FontSize="11" VerticalAlignment="Center" HorizontalAlignment="Center"
+                       Visibility="Collapsed"/>
+          </Grid>
+        </Border>
+
+        <!-- Options -->
+        <Border Grid.Row="2" CornerRadius="9" Background="#1A1A28" BorderBrush="#2E2E4A" BorderThickness="1"
+                Margin="0,0,0,10" Padding="14,10">
+          <WrapPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,24,0">
+              <TextBlock Text="Format :" Foreground="#6B6B8A" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <RadioButton x:Name="RdoMp3" Content="MP3 (320k)" Style="{StaticResource RdoDark}" IsChecked="True" GroupName="fmt"/>
+              <RadioButton x:Name="RdoMp4" Content="MP4 (best)" Style="{StaticResource RdoDark}" GroupName="fmt"/>
+            </StackPanel>
+            <CheckBox x:Name="ChkPlaylist" Content="Toute la playlist"  Style="{StaticResource ChkDark}"/>
+            <CheckBox x:Name="ChkSubs"     Content="Sous-titres (.srt)" Style="{StaticResource ChkDark}"/>
+            <CheckBox x:Name="ChkMeta"     Content="Métadonnées + cover" Style="{StaticResource ChkDark}" IsChecked="True"/>
+          </WrapPanel>
+        </Border>
+
+        <!-- Destination -->
+        <Grid Grid.Row="3" Margin="0,0,0,10">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBox x:Name="TxtOut" Grid.Column="0" Height="34" Style="{StaticResource TxtDark}"
+                   IsReadOnly="True" Margin="0,0,8,0"/>
+          <Button x:Name="BtnBrowse" Grid.Column="1" Content="Changer" Style="{StaticResource BtnSecondary}"
+                  Width="80" Margin="0,0,8,0"/>
+          <Button x:Name="BtnOpen"   Grid.Column="2" Content="📂 Ouvrir" Style="{StaticResource BtnSecondary}"
+                  Width="90"/>
+        </Grid>
+
+        <!-- Boutons action -->
+        <Grid Grid.Row="4" Margin="0,0,0,12">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <Button x:Name="BtnStartAll" Grid.Column="0" Content="⬇  Tout télécharger"
+                  Style="{StaticResource BtnPrimary}" Width="170" Margin="0,0,8,0"/>
+          <Button x:Name="BtnCancel"   Grid.Column="1" Content="✕  Annuler"
+                  Style="{StaticResource BtnDanger}"   Width="110" IsEnabled="False" Margin="0,0,8,0"/>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+            <TextBlock x:Name="TxtStatus" Text="Pret" Foreground="#3FB950" FontSize="11" VerticalAlignment="Center"/>
+          </StackPanel>
+          <Button x:Name="BtnUpdateYtdlp" Grid.Column="3" Content="↑ yt-dlp"
+                  Style="{StaticResource BtnSecondary}" Width="90" Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- File d'attente -->
+        <Border Grid.Row="5" CornerRadius="9" Background="#1A1A28" BorderBrush="#2E2E4A" BorderThickness="1"
+                ClipToBounds="True">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="32"/>
+              <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+            <!-- Header queue -->
+            <Border Grid.Row="0" Background="#14141E" CornerRadius="9,9,0,0" Padding="14,0">
+              <Grid>
+                <TextBlock Text="File d'attente" Foreground="#6B6B8A" FontSize="11"
+                           FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Button x:Name="BtnClearDone" Content="Effacer terminés" HorizontalAlignment="Right"
+                        Style="{StaticResource BtnSecondary}" Height="24" Padding="10,0" FontSize="10"
+                        VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+            <!-- Liste -->
+            <ListView x:Name="LstQueue" Grid.Row="1" Background="Transparent" BorderThickness="0"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                      VirtualizingPanel.IsVirtualizing="True">
+              <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                  <Setter Property="Padding"                    Value="0"/>
+                  <Setter Property="Background"                 Value="Transparent"/>
+                  <Setter Property="BorderThickness"            Value="0,0,0,1"/>
+                  <Setter Property="BorderBrush"                Value="#1E1E30"/>
+                  <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter Property="Background" Value="#1E1E2C"/>
+                    </Trigger>
+                    <Trigger Property="IsSelected" Value="True">
+                      <Setter Property="Background" Value="#1E1E2C"/>
+                    </Trigger>
+                  </Style.Triggers>
+                </Style>
+              </ListView.ItemContainerStyle>
+              <ListView.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="14,8">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*"/>
+                      <ColumnDefinition Width="120"/>
+                      <ColumnDefinition Width="50"/>
+                      <ColumnDefinition Width="30"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Title}" Foreground="#E8E8F0" FontSize="12"
+                                 TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Url}"   Foreground="#4A4A6A" FontSize="9"
+                                 TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                    <ProgressBar Grid.Column="1" Value="{Binding Progress}" Maximum="100" Minimum="0"
+                                 Style="{StaticResource PrgDark}" VerticalAlignment="Center" Margin="10,0"/>
+                    <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="#6B6B8A"
+                               FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <Button Grid.Column="3" Content="✕" Tag="{Binding}" Width="22" Height="22"
+                            x:Name="BtnRemoveItem"
+                            Style="{StaticResource BtnDanger}" Padding="0" FontSize="10"
+                            VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                  </Grid>
+                </DataTemplate>
+              </ListView.ItemTemplate>
+            </ListView>
+            <!-- Placeholder queue vide -->
+            <TextBlock Grid.Row="1" x:Name="TxtQueueEmpty"
+                       Text="Colle une URL ci-dessus et clique + Ajouter"
+                       Foreground="#2E2E4A" FontSize="12" HorizontalAlignment="Center"
+                       VerticalAlignment="Center" IsHitTestVisible="False"/>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <!-- ===== STATUS BAR ===== -->
+      <Border Grid.Row="2" CornerRadius="0,0,12,12" Background="#0A0A12" Padding="16,6">
+        <Grid>
+          <StackPanel Orientation="Horizontal">
+            <TextBlock x:Name="TxtYtdlpVer" Text="yt-dlp ..." Foreground="#2E2E4A" FontSize="10" VerticalAlignment="Center"/>
+          </StackPanel>
+          <TextBlock Text="by n3lio" HorizontalAlignment="Right" Foreground="#2A2A40"
+                     FontSize="10" VerticalAlignment="Center" FontStyle="Italic"/>
+        </Grid>
+      </Border>
+
+    </Grid>
+  </Border>
+</Window>
+'@
+
+# ================================================================
+#  Parse XAML + bind contrôles
+# ================================================================
+try {
+    $reader = [System.Xml.XmlNodeReader]::new($xaml)
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+} catch {
+    [System.Windows.MessageBox]::Show("Erreur XAML : $($_.Exception.Message)`n`n$($_.ScriptStackTrace)")
+    Write-Crash 'XamlReader.Load' $_; return
 }
 
-# Helper : style bouton secondaire (plat, bord subtil)
-function Style-BtnSecondary {
-    param($Btn, [string]$Fg = '')
-    $Btn.FlatStyle = 'Flat'
-    $Btn.BackColor = $cSurface
-    $Btn.ForeColor = if ($Fg) { [System.Drawing.Color]::FromArgb([int]"0x$($Fg.TrimStart('#').Substring(0,2))", [int]"0x$($Fg.TrimStart('#').Substring(2,2))", [int]"0x$($Fg.TrimStart('#').Substring(4,2))") } else { $cText }
-    $Btn.FlatAppearance.BorderColor = $cBorder
-    $Btn.FlatAppearance.BorderSize  = 1
-    $Btn.FlatAppearance.MouseOverBackColor = $cBorder
-}
+function Find-Ctrl { param([string]$Name) $window.FindName($Name) }
 
-# (on n'appelle pas Style-BtnSecondary avec un hex — on le fera inline pour éviter la complexité de parsing)
+$TitleBar        = Find-Ctrl 'TitleBar'
+$TxtVersion      = Find-Ctrl 'TxtVersion'
+$TxtUpdateBadge  = Find-Ctrl 'TxtUpdateBadge'
+$BtnAbout        = Find-Ctrl 'BtnAbout'
+$BtnMinimize     = Find-Ctrl 'BtnMinimize'
+$BtnClose        = Find-Ctrl 'BtnClose'
+$CmbUrl          = Find-Ctrl 'CmbUrl'
+$BtnAddQueue     = Find-Ctrl 'BtnAddQueue'
+$PreviewCard     = Find-Ctrl 'PreviewCard'
+$ImgThumb        = Find-Ctrl 'ImgThumb'
+$TxtPreviewTitle  = Find-Ctrl 'TxtPreviewTitle'
+$TxtPreviewChannel= Find-Ctrl 'TxtPreviewChannel'
+$TxtPreviewDuration=Find-Ctrl 'TxtPreviewDuration'
+$TxtPreviewLoading= Find-Ctrl 'TxtPreviewLoading'
+$RdoMp3          = Find-Ctrl 'RdoMp3'
+$RdoMp4          = Find-Ctrl 'RdoMp4'
+$ChkPlaylist     = Find-Ctrl 'ChkPlaylist'
+$ChkSubs         = Find-Ctrl 'ChkSubs'
+$ChkMeta         = Find-Ctrl 'ChkMeta'
+$TxtOut          = Find-Ctrl 'TxtOut'
+$BtnBrowse       = Find-Ctrl 'BtnBrowse'
+$BtnOpen         = Find-Ctrl 'BtnOpen'
+$BtnStartAll     = Find-Ctrl 'BtnStartAll'
+$BtnCancel       = Find-Ctrl 'BtnCancel'
+$TxtStatus       = Find-Ctrl 'TxtStatus'
+$BtnUpdateYtdlp  = Find-Ctrl 'BtnUpdateYtdlp'
+$LstQueue        = Find-Ctrl 'LstQueue'
+$TxtQueueEmpty   = Find-Ctrl 'TxtQueueEmpty'
+$BtnClearDone    = Find-Ctrl 'BtnClearDone'
+$TxtYtdlpVer     = Find-Ctrl 'TxtYtdlpVer'
 
-# ----------------- UI dimensions -----------------
+# Init valeurs
+$TxtVersion.Text = " v$AppVersion"
+$TxtOut.Text     = $defaultOut
+foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
+$LstQueue.ItemsSource = $queueItems
 
-$collapsedHeight = 400
-$expandedHeight  = 650
+# ================================================================
+#  Drag fenêtre sans bordure
+# ================================================================
+$TitleBar.Add_MouseLeftButtonDown({ $window.DragMove() })
 
-# ----------------- UI build -----------------
+# ================================================================
+#  Boutons titre
+# ================================================================
+$BtnClose.Add_Click({ $window.Close() })
+$BtnMinimize.Add_Click({ $window.WindowState = 'Minimized' })
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text            = $AppName
-$form.Size            = New-Object System.Drawing.Size(740, $collapsedHeight)
-$form.MinimumSize     = New-Object System.Drawing.Size(680, $collapsedHeight)
-$form.StartPosition   = 'CenterScreen'
-$form.Font            = New-Object System.Drawing.Font('Segoe UI', 9)
-$form.BackColor       = $cBg
-$form.ForeColor       = $cText
+$BtnAbout.Add_Click({
+    [System.Windows.MessageBox]::Show(
+        "$AppName v$AppVersion`nby $AppAuthor`n$AppRepo`n`nPowered by yt-dlp + ffmpeg",
+        'About', 'OK', 'Information') | Out-Null
+})
 
-# ---- Bouton "?" — coin supérieur droit ----
-$btnAbout             = New-Object System.Windows.Forms.Button
-$btnAbout.Text        = '?'
-$btnAbout.Size        = New-Object System.Drawing.Size(30, 24)
-$btnAbout.Location    = New-Object System.Drawing.Point(698, 5)
-$btnAbout.Anchor      = 'Top, Right'
-$btnAbout.Font        = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-$btnAbout.FlatStyle   = 'Flat'
-$btnAbout.BackColor   = $cSurface
-$btnAbout.ForeColor   = $cMuted
-$btnAbout.FlatAppearance.BorderColor = $cBorder
-$btnAbout.FlatAppearance.BorderSize  = 1
-$btnAbout.FlatAppearance.MouseOverBackColor = $cBorder
-$form.Controls.Add($btnAbout)
+# ================================================================
+#  Update badge (cliquable)
+# ================================================================
+$TxtUpdateBadge.Add_MouseLeftButtonDown({
+    if ($script:updateAvail) { Start-Process $script:updateAvail.Url }
+})
 
-# ---- Label URL ----
-$lblUrl               = New-Object System.Windows.Forms.Label
-$lblUrl.Text          = 'URL YouTube'
-$lblUrl.Location      = New-Object System.Drawing.Point(16, 14)
-$lblUrl.AutoSize      = $true
-$lblUrl.ForeColor     = $cMuted
-$lblUrl.Font          = New-Object System.Drawing.Font('Segoe UI', 8)
-$form.Controls.Add($lblUrl)
+# ================================================================
+#  Détection URL en temps réel → preview + auto-playlist
+# ================================================================
+$script:previewJob   = $null
+$script:lastPreviewUrl = ''
 
-# ---- ComboBox URL avec historique ----
-$cmbUrl               = New-Object System.Windows.Forms.ComboBox
-$cmbUrl.Location      = New-Object System.Drawing.Point(16, 31)
-$cmbUrl.Size          = New-Object System.Drawing.Size(690, 26)
-$cmbUrl.Anchor        = 'Top, Left, Right'
-$cmbUrl.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDown
-$cmbUrl.AutoCompleteMode = [System.Windows.Forms.AutoCompleteMode]::None
-$cmbUrl.BackColor     = $cSurface
-$cmbUrl.ForeColor     = $cText
-$cmbUrl.FlatStyle     = 'Flat'
-foreach ($h in $historyList) { $cmbUrl.Items.Add($h) | Out-Null }
-$form.Controls.Add($cmbUrl)
-
-# ---- Label détection ----
-$lblDetect            = New-Object System.Windows.Forms.Label
-$lblDetect.Text       = ''
-$lblDetect.Location   = New-Object System.Drawing.Point(16, 60)
-$lblDetect.Size       = New-Object System.Drawing.Size(690, 16)
-$lblDetect.Font       = New-Object System.Drawing.Font('Segoe UI', 8, [System.Drawing.FontStyle]::Italic)
-$lblDetect.ForeColor  = $cMuted
-$lblDetect.Anchor     = 'Top, Left, Right'
-$form.Controls.Add($lblDetect)
-
-$cmbUrl.Add_TextChanged({
+$CmbUrl.Add_TextChanged({
     try {
-        $detected = Detect-UrlType -Url $cmbUrl.Text
-        switch ($detected) {
-            'playlist' {
-                $lblDetect.Text      = '▶  Playlist detectee — "Toute la playlist" coché automatiquement'
-                $lblDetect.ForeColor = $cAccent
-                $chkPlaylist.Checked = $true
-            }
-            'video' {
-                $lblDetect.Text      = '▶  Video unique'
-                $lblDetect.ForeColor = $cOk
-                $chkPlaylist.Checked = $false
-            }
-            default {
-                $lblDetect.Text = ''
-            }
+        $raw = $CmbUrl.Text.Trim()
+        $detected = Detect-UrlType $raw
+        if ($detected -eq 'playlist') { $ChkPlaylist.IsChecked = $true }
+        elseif ($detected -eq 'video')  { $ChkPlaylist.IsChecked = $false }
+
+        # Preview : on lance seulement si URL valide et changée
+        $cleaned = Clean-YouTubeUrl $raw
+        if ($cleaned -ne $script:lastPreviewUrl -and $cleaned -match '^https?://') {
+            $script:lastPreviewUrl = $cleaned
+            # Annule le job preview précédent
+            if ($script:previewJob) { try { Stop-Job $script:previewJob -ErrorAction SilentlyContinue; Remove-Job $script:previewJob -Force -ErrorAction SilentlyContinue } catch {} }
+            # Affiche la card en mode loading
+            $PreviewCard.Visibility  = 'Visible'
+            $TxtPreviewLoading.Visibility = 'Visible'
+            $ImgThumb.Source         = $null
+            $TxtPreviewTitle.Text    = ''
+            $TxtPreviewChannel.Text  = ''
+            $TxtPreviewDuration.Text = ''
+            # Lance le job
+            $ytdlpPath = $ytdlp
+            $script:previewJob = Start-Job -ScriptBlock {
+                param($ ytPath, $url)
+                try {
+                    $json = & $ytPath --dump-json --no-playlist --no-warnings $url 2>$null | Select-Object -First 1
+                    if ($json) { return $json | ConvertFrom-Json }
+                } catch {}
+                return $null
+            } -ArgumentList $ytdlp, $cleaned
+        } elseif ($cleaned -notmatch '^https?://') {
+            $PreviewCard.Visibility = 'Collapsed'
         }
     } catch {}
 })
 
-# ---- Séparateur visuel (panel fin) ----
-$sep1             = New-Object System.Windows.Forms.Panel
-$sep1.Location    = New-Object System.Drawing.Point(16, 82)
-$sep1.Size        = New-Object System.Drawing.Size(690, 1)
-$sep1.BackColor   = $cBorder
-$sep1.Anchor      = 'Top, Left, Right'
-$form.Controls.Add($sep1)
-
-# ---- GroupBox Format ----
-$grpFormat             = New-Object System.Windows.Forms.GroupBox
-$grpFormat.Text        = 'Format'
-$grpFormat.Location    = New-Object System.Drawing.Point(16, 92)
-$grpFormat.Size        = New-Object System.Drawing.Size(336, 72)
-$grpFormat.ForeColor   = $cMuted
-$grpFormat.BackColor   = $cSurface
-
-$rdoMp4               = New-Object System.Windows.Forms.RadioButton
-$rdoMp4.Text          = 'MP4 — qualite max (video + audio)'
-$rdoMp4.Location      = New-Object System.Drawing.Point(12, 20)
-$rdoMp4.AutoSize      = $true
-$rdoMp4.BackColor     = $cSurface
-$rdoMp4.ForeColor     = $cText
-$grpFormat.Controls.Add($rdoMp4)
-
-$rdoMp3               = New-Object System.Windows.Forms.RadioButton
-$rdoMp3.Text          = 'MP3 — audio seul (320 kbps)'
-$rdoMp3.Location      = New-Object System.Drawing.Point(12, 44)
-$rdoMp3.AutoSize      = $true
-$rdoMp3.BackColor     = $cSurface
-$rdoMp3.ForeColor     = $cText
-$rdoMp3.Checked       = $true
-$grpFormat.Controls.Add($rdoMp3)
-$form.Controls.Add($grpFormat)
-
-# ---- GroupBox Options ----
-$grpOpts              = New-Object System.Windows.Forms.GroupBox
-$grpOpts.Text         = 'Options'
-$grpOpts.Location     = New-Object System.Drawing.Point(362, 92)
-$grpOpts.Size         = New-Object System.Drawing.Size(344, 72)
-$grpOpts.ForeColor    = $cMuted
-$grpOpts.BackColor    = $cSurface
-
-$chkPlaylist          = New-Object System.Windows.Forms.CheckBox
-$chkPlaylist.Text     = 'Toute la playlist (si URL playlist)'
-$chkPlaylist.Location = New-Object System.Drawing.Point(12, 20)
-$chkPlaylist.AutoSize = $true
-$chkPlaylist.BackColor = $cSurface
-$chkPlaylist.ForeColor = $cText
-$grpOpts.Controls.Add($chkPlaylist)
-
-$chkSubs              = New-Object System.Windows.Forms.CheckBox
-$chkSubs.Text         = 'Inclure sous-titres si dispo (.srt)'
-$chkSubs.Location     = New-Object System.Drawing.Point(12, 44)
-$chkSubs.AutoSize     = $true
-$chkSubs.BackColor    = $cSurface
-$chkSubs.ForeColor    = $cText
-$grpOpts.Controls.Add($chkSubs)
-$form.Controls.Add($grpOpts)
-
-# ---- Séparateur ----
-$sep2             = New-Object System.Windows.Forms.Panel
-$sep2.Location    = New-Object System.Drawing.Point(16, 174)
-$sep2.Size        = New-Object System.Drawing.Size(690, 1)
-$sep2.BackColor   = $cBorder
-$sep2.Anchor      = 'Top, Left, Right'
-$form.Controls.Add($sep2)
-
-# ---- Label dossier ----
-$lblOut           = New-Object System.Windows.Forms.Label
-$lblOut.Text      = 'Dossier de destination'
-$lblOut.Location  = New-Object System.Drawing.Point(16, 182)
-$lblOut.AutoSize  = $true
-$lblOut.ForeColor = $cMuted
-$lblOut.Font      = New-Object System.Drawing.Font('Segoe UI', 8)
-$form.Controls.Add($lblOut)
-
-# ---- Champ dossier (read-only) ----
-$txtOut           = New-Object System.Windows.Forms.TextBox
-$txtOut.Location  = New-Object System.Drawing.Point(16, 198)
-$txtOut.Size      = New-Object System.Drawing.Size(588, 25)
-$txtOut.Text      = $defaultOut
-$txtOut.Anchor    = 'Top, Left, Right'
-$txtOut.ReadOnly  = $true
-$txtOut.BackColor = $cSurface
-$txtOut.ForeColor = $cText
-$txtOut.BorderStyle = 'FixedSingle'
-$form.Controls.Add($txtOut)
-
-# ---- Bouton Changer ----
-$btnBrowse             = New-Object System.Windows.Forms.Button
-$btnBrowse.Text        = 'Changer...'
-$btnBrowse.Location    = New-Object System.Drawing.Point(614, 196)
-$btnBrowse.Size        = New-Object System.Drawing.Size(92, 26)
-$btnBrowse.Anchor      = 'Top, Right'
-$btnBrowse.FlatStyle   = 'Flat'
-$btnBrowse.BackColor   = $cSurface
-$btnBrowse.ForeColor   = $cText
-$btnBrowse.FlatAppearance.BorderColor = $cBorder
-$btnBrowse.FlatAppearance.BorderSize  = 1
-$btnBrowse.FlatAppearance.MouseOverBackColor = $cBorder
-$btnBrowse.Add_Click({
+# ================================================================
+#  Dossier destination
+# ================================================================
+$BtnBrowse.Add_Click({
     try {
         $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlg.SelectedPath = $txtOut.Text
+        $dlg.SelectedPath = $TxtOut.Text
         if ($dlg.ShowDialog() -eq 'OK') {
-            $txtOut.Text = $dlg.SelectedPath
-            $cfgSave = Read-Config
-            if (-not $cfgSave) { $cfgSave = [PSCustomObject]@{} }
-            if ($cfgSave.PSObject.Properties.Name -contains 'lastFolder') { $cfgSave.lastFolder = $dlg.SelectedPath }
-            else { $cfgSave | Add-Member -NotePropertyName 'lastFolder' -NotePropertyValue $dlg.SelectedPath }
-            Save-Config $cfgSave
+            $TxtOut.Text = $dlg.SelectedPath
+            $c = Read-Config; Set-CfgProp $c 'lastFolder' $dlg.SelectedPath; Save-Config $c
         }
-    } catch { Write-Crash -Where 'btnBrowse.Click' -ErrObj $_ }
+    } catch { Write-Crash 'BtnBrowse' $_ }
 })
-$form.Controls.Add($btnBrowse)
 
-# ---- Séparateur ----
-$sep3             = New-Object System.Windows.Forms.Panel
-$sep3.Location    = New-Object System.Drawing.Point(16, 232)
-$sep3.Size        = New-Object System.Drawing.Size(690, 1)
-$sep3.BackColor   = $cBorder
-$sep3.Anchor      = 'Top, Left, Right'
-$form.Controls.Add($sep3)
-
-# ---- Bouton Télécharger (accent) ----
-$btnGo                   = New-Object System.Windows.Forms.Button
-$btnGo.Text              = '  ⬇  Telecharger'
-$btnGo.Location          = New-Object System.Drawing.Point(16, 244)
-$btnGo.Size              = New-Object System.Drawing.Size(160, 36)
-$btnGo.FlatStyle         = 'Flat'
-$btnGo.BackColor         = $cAccent
-$btnGo.ForeColor         = [System.Drawing.Color]::White
-$btnGo.Font              = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
-$btnGo.FlatAppearance.BorderSize  = 0
-$btnGo.FlatAppearance.MouseOverBackColor = $cAccentHo
-$form.Controls.Add($btnGo)
-
-# ---- Bouton Annuler ----
-$btnCancel               = New-Object System.Windows.Forms.Button
-$btnCancel.Text          = '✕  Annuler'
-$btnCancel.Location      = New-Object System.Drawing.Point(186, 244)
-$btnCancel.Size          = New-Object System.Drawing.Size(120, 36)
-$btnCancel.FlatStyle     = 'Flat'
-$btnCancel.BackColor     = $cSurface
-$btnCancel.ForeColor     = $cDanger
-$btnCancel.FlatAppearance.BorderColor = $cDanger
-$btnCancel.FlatAppearance.BorderSize  = 1
-$btnCancel.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::FromArgb(50, 248, 81, 73)
-$btnCancel.Enabled       = $false
-$form.Controls.Add($btnCancel)
-
-# ---- Bouton Ouvrir dossier ----
-$btnOpen                 = New-Object System.Windows.Forms.Button
-$btnOpen.Text            = '📂  Ouvrir'
-$btnOpen.Location        = New-Object System.Drawing.Point(316, 244)
-$btnOpen.Size            = New-Object System.Drawing.Size(110, 36)
-$btnOpen.FlatStyle       = 'Flat'
-$btnOpen.BackColor       = $cSurface
-$btnOpen.ForeColor       = $cText
-$btnOpen.FlatAppearance.BorderColor = $cBorder
-$btnOpen.FlatAppearance.BorderSize  = 1
-$btnOpen.FlatAppearance.MouseOverBackColor = $cBorder
-$btnOpen.Add_Click({
-    try {
-        if (Test-Path $txtOut.Text) { Start-Process explorer.exe $txtOut.Text }
-    } catch { Write-Crash -Where 'btnOpen.Click' -ErrObj $_ }
+$BtnOpen.Add_Click({
+    if (Test-Path $TxtOut.Text) { Start-Process explorer.exe $TxtOut.Text }
 })
-$form.Controls.Add($btnOpen)
 
-# ---- Label statut ----
-$lblStatus               = New-Object System.Windows.Forms.Label
-$lblStatus.Location      = New-Object System.Drawing.Point(436, 252)
-$lblStatus.Size          = New-Object System.Drawing.Size(270, 20)
-$lblStatus.Anchor        = 'Top, Left, Right'
-$lblStatus.Font          = New-Object System.Drawing.Font('Segoe UI', 9)
-if ($ytdlp -and $ffmpeg) {
-    $lblStatus.Text      = "Pret — yt-dlp + ffmpeg OK"
-    $lblStatus.ForeColor = $cOk
-} else {
-    $lblStatus.Text      = "ATTENTION : yt-dlp ou ffmpeg introuvable"
-    $lblStatus.ForeColor = $cDanger
-}
-$form.Controls.Add($lblStatus)
-
-# ---- Progress bar ----
-$progressBar             = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location    = New-Object System.Drawing.Point(16, 292)
-$progressBar.Size        = New-Object System.Drawing.Size(690, 8)
-$progressBar.Minimum     = 0
-$progressBar.Maximum     = 100
-$progressBar.Value       = 0
-$progressBar.Style       = 'Continuous'
-$progressBar.Anchor      = 'Top, Left, Right'
-$form.Controls.Add($progressBar)
-
-# ---- Bouton logs ----
-$btnLogs                 = New-Object System.Windows.Forms.Button
-$btnLogs.Text            = 'Logs ▾'
-$btnLogs.Location        = New-Object System.Drawing.Point(16, 312)
-$btnLogs.Size            = New-Object System.Drawing.Size(100, 24)
-$btnLogs.FlatStyle       = 'Flat'
-$btnLogs.BackColor       = $cBg
-$btnLogs.ForeColor       = $cMuted
-$btnLogs.FlatAppearance.BorderColor = $cBorder
-$btnLogs.FlatAppearance.BorderSize  = 1
-$btnLogs.FlatAppearance.MouseOverBackColor = $cSurface
-$form.Controls.Add($btnLogs)
-
-# ---- Zone logs ----
-$txtLog                  = New-Object System.Windows.Forms.TextBox
-$txtLog.Location         = New-Object System.Drawing.Point(16, 348)
-$txtLog.Size             = New-Object System.Drawing.Size(690, 260)
-$txtLog.Multiline        = $true
-$txtLog.ScrollBars       = 'Vertical'
-$txtLog.ReadOnly         = $true
-$txtLog.Font             = New-Object System.Drawing.Font('Cascadia Mono,Consolas', 8)
-$txtLog.BackColor        = [System.Drawing.Color]::FromArgb(12, 12, 16)
-$txtLog.ForeColor        = [System.Drawing.Color]::FromArgb(180, 210, 180)
-$txtLog.Anchor           = 'Top, Bottom, Left, Right'
-$txtLog.Visible          = $false
-$txtLog.BorderStyle      = 'None'
-$form.Controls.Add($txtLog)
-
-$btnLogs.Add_Click({
+# ================================================================
+#  Ajout à la file d'attente
+# ================================================================
+$BtnAddQueue.Add_Click({
     try {
-        if ($txtLog.Visible) {
-            $txtLog.Visible  = $false
-            $btnLogs.Text    = 'Logs ▾'
-            $form.Height     = $collapsedHeight
-        } else {
-            $txtLog.Visible  = $true
-            $btnLogs.Text    = 'Logs ▴'
-            $form.Height     = $expandedHeight
+        $raw     = $CmbUrl.Text.Trim()
+        $cleaned = Clean-YouTubeUrl $raw
+        if (-not $cleaned -or $cleaned -notmatch '^https?://') {
+            [System.Windows.MessageBox]::Show('URL YouTube invalide.', $AppName, 'OK', 'Warning') | Out-Null
+            return
         }
-    } catch { Write-Crash -Where 'btnLogs.Click' -ErrObj $_ }
+        # Évite les doublons en attente
+        $already = $queueItems | Where-Object { $_.Url -eq $cleaned -and $_.Status -in @('En attente','En cours') }
+        if ($already) { return }
+
+        $fmt = if ($RdoMp3.IsChecked) { 'MP3' } else { 'MP4' }
+        $item = [QueueItem]::new()
+        $item.Url      = $cleaned
+        $item.Title    = $cleaned   # sera remplacé par le vrai titre si preview disponible
+        $item.Status   = 'En attente'
+        $item.Progress = 0
+        $item.Format   = $fmt
+
+        # Récupère le titre depuis la preview si dispo
+        if ($TxtPreviewTitle.Text -and $TxtPreviewTitle.Text -ne '') { $item.Title = $TxtPreviewTitle.Text }
+
+        $queueItems.Add($item)
+        $TxtQueueEmpty.Visibility = 'Collapsed'
+        Save-HistoryUrl $cleaned
+        $CmbUrl.Items.Clear()
+        foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
+        $CmbUrl.Text = ''
+        $PreviewCard.Visibility = 'Collapsed'
+    } catch { Write-Crash 'BtnAddQueue' $_ }
 })
 
-$btnAbout.Add_Click({
-    try {
-        $msg = "$AppName v$AppVersion`r`nby $AppAuthor`r`n$AppRepo`r`n`r`nPowered by yt-dlp + ffmpeg."
-        [System.Windows.Forms.MessageBox]::Show($msg, 'About', 'OK', 'Information') | Out-Null
-    } catch { Write-Crash -Where 'btnAbout.Click' -ErrObj $_ }
-})
-
-$btnCancel.Add_Click({
-    try {
-        if ($script:proc -and -not $script:proc.HasExited) {
-            Start-Process 'taskkill' -ArgumentList @('/F', '/T', '/PID', $script:proc.Id.ToString()) -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+# Supprimer un item de la queue
+$LstQueue.AddHandler(
+    [System.Windows.Controls.Button]::ClickEvent,
+    [System.Windows.RoutedEventHandler]{
+        param($s, $e)
+        if ($e.OriginalSource -is [System.Windows.Controls.Button] -and
+            $e.OriginalSource.Name -eq 'BtnRemoveItem') {
+            $item = $e.OriginalSource.Tag -as [QueueItem]
+            if ($item -and $item.Status -ne 'En cours') {
+                $queueItems.Remove($item) | Out-Null
+                if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
+            }
         }
-        $script:running    = $false
-        $btnGo.Enabled     = $true
-        $btnCancel.Enabled = $false
-        $progressBar.Value = 0
-        $lblStatus.Text    = 'Annule.'
-        $lblStatus.ForeColor = $cWarn
-    } catch { Write-Crash -Where 'btnCancel.Click' -ErrObj $_ }
+    }
+)
+
+$BtnClearDone.Add_Click({
+    $done = @($queueItems | Where-Object { $_.Status -in @('Termine','Echec','Annule') })
+    foreach ($d in $done) { $queueItems.Remove($d) | Out-Null }
+    if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
 })
 
-# ----------------- Process state -----------------
+# ================================================================
+#  Update yt-dlp bouton
+# ================================================================
+$BtnUpdateYtdlp.Add_Click({
+    $BtnUpdateYtdlp.IsEnabled = $false
+    $TxtStatus.Text      = 'Mise a jour yt-dlp...'
+    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::Orange
+    $ytdlpPath = $ytdlp
+    $script:updateYtdlpJob = Start-Job -ScriptBlock {
+        param($path)
+        try {
+            $rel   = Invoke-RestMethod 'https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest' -UseBasicParsing -TimeoutSec 20
+            $asset = $rel.assets | Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -First 1
+            $tmp   = $path + '.new'
+            Invoke-WebRequest $asset.browser_download_url -OutFile $tmp -UseBasicParsing
+            Move-Item $tmp $path -Force
+            return $rel.tag_name
+        } catch { return $null }
+    } -ArgumentList $ytdlpPath
+})
 
+# ================================================================
+#  Processus de téléchargement
+# ================================================================
 $script:proc       = $null
 $script:logFile    = $null
 $script:logPos     = 0
 $script:running    = $false
+$script:currentItem = $null
 
-function Append-LogText { param([string]$Text) if ($Text) { $txtLog.AppendText($Text) } }
+function Start-NextDownload {
+    $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
+    if (-not $next) {
+        $script:running = $false
+        $BtnStartAll.IsEnabled = $true
+        $BtnCancel.IsEnabled   = $false
+        $TxtStatus.Text      = 'Tout termine  ✔'
+        $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
+        # Toast Windows
+        try {
+            [System.Windows.Forms.Application]::EnableVisualStyles()
+            $notify = New-Object System.Windows.Forms.NotifyIcon
+            $notify.Icon = [System.Drawing.SystemIcons]::Information
+            $notify.Visible = $true
+            $notify.BalloonTipTitle = 'YouTube Grabber'
+            $notify.BalloonTipText  = 'Tous les telechargements sont termines !'
+            $notify.ShowBalloonTip(4000)
+            Start-Sleep -Milliseconds 4500
+            $notify.Dispose()
+        } catch {}
+        return
+    }
 
-# ----------------- Timer -----------------
+    $script:currentItem = $next
+    $next.Status   = 'En cours'
+    $next.Progress = 0
+    $out = $TxtOut.Text
+    if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
 
-$timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 200
+    $ytArgs = New-Object System.Collections.Generic.List[string]
+
+    if ($next.Format -eq 'MP3') {
+        $ytArgs.Add('-x'); $ytArgs.Add('--audio-format'); $ytArgs.Add('mp3')
+        $ytArgs.Add('--audio-quality'); $ytArgs.Add('0')
+    } else {
+        $ytArgs.Add('-f'); $ytArgs.Add('bv*+ba/b')
+        $ytArgs.Add('--merge-output-format'); $ytArgs.Add('mp4')
+    }
+
+    # Métadonnées filtrées (titre, artiste, album, genre, année, track, disc — pas de commentaires)
+    if ($ChkMeta.IsChecked) {
+        $ytArgs.Add('--embed-thumbnail')
+        $ytArgs.Add('--add-metadata')
+        # On post-process avec mutagen via yt-dlp pour retirer les champs indésirables
+        # yt-dlp supporte --parse-metadata pour écraser les champs
+        $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(title)s:%(meta_title)s')
+        $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(uploader)s:%(meta_artist)s')
+        $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(upload_date>%Y)s:%(meta_date)s')
+        # Nettoie commentaire et description (souvent du spam)
+        $ytArgs.Add('--parse-metadata'); $ytArgs.Add(':%(meta_comment)s')
+        $ytArgs.Add('--parse-metadata'); $ytArgs.Add(':%(meta_description)s')
+    }
+
+    if ($ChkPlaylist.IsChecked) { $ytArgs.Add('--yes-playlist') } else { $ytArgs.Add('--no-playlist') }
+
+    if ($ChkSubs.IsChecked) {
+        $ytArgs.Add('--write-subs'); $ytArgs.Add('--write-auto-subs')
+        $ytArgs.Add('--sub-langs'); $ytArgs.Add('fr,en')
+        $ytArgs.Add('--convert-subs'); $ytArgs.Add('srt')
+    }
+
+    $template = if ($ChkPlaylist.IsChecked) {
+        Join-Path $out '%(playlist_title)s\%(playlist_index)s - %(title)s.%(ext)s'
+    } else {
+        Join-Path $out '%(title)s.%(ext)s'
+    }
+
+    $ytArgs.Add('--ffmpeg-location'); $ytArgs.Add((Split-Path -Parent $ffmpeg))
+    $ytArgs.Add('-o'); $ytArgs.Add($template)
+    $ytArgs.Add('--newline'); $ytArgs.Add('--no-mtime')
+    $ytArgs.Add('--encoding'); $ytArgs.Add('utf-8')
+    $ytArgs.Add($next.Url)
+
+    $argString = ($ytArgs | ForEach-Object { Quote-Arg $_ }) -join ' '
+
+    $script:logFile = Join-Path $env:TEMP ("ytgrab-" + [Guid]::NewGuid().ToString('N') + ".log")
+    $script:logPos  = 0
+    New-Item -ItemType File -Path $script:logFile -Force | Out-Null
+
+    $cmdLine = "chcp 65001 >nul & `"$ytdlp`" $argString > `"$($script:logFile)`" 2>&1"
+    $script:proc    = Start-Process 'cmd.exe' -ArgumentList @('/c', $cmdLine) -WindowStyle Hidden -PassThru
+    $script:running = $true
+
+    $TxtStatus.Text       = "Telechargement : $($next.Title.Substring(0, [Math]::Min(40, $next.Title.Length)))..."
+    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::CornflowerBlue
+}
+
+$BtnStartAll.Add_Click({
+    if ($script:running) { return }
+    $pending = @($queueItems | Where-Object { $_.Status -eq 'En attente' })
+    if ($pending.Count -eq 0) {
+        [System.Windows.MessageBox]::Show('La file est vide. Ajoute des URLs d''abord.', $AppName, 'OK', 'Information') | Out-Null
+        return
+    }
+    if (-not $ytdlp) { [System.Windows.MessageBox]::Show('yt-dlp introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
+    if (-not $ffmpeg) { [System.Windows.MessageBox]::Show('ffmpeg introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
+    $BtnStartAll.IsEnabled = $false
+    $BtnCancel.IsEnabled   = $true
+    Start-NextDownload
+})
+
+$BtnCancel.Add_Click({
+    if ($script:proc -and -not $script:proc.HasExited) {
+        Start-Process 'taskkill' -ArgumentList @('/F','/T','/PID',$script:proc.Id.ToString()) -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+    }
+    if ($script:currentItem) { $script:currentItem.Status = 'Annule'; $script:currentItem.Progress = 0 }
+    $script:running        = $false
+    $BtnStartAll.IsEnabled = $true
+    $BtnCancel.IsEnabled   = $false
+    $TxtStatus.Text        = 'Annule.'
+    $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::Orange
+})
+
+# ================================================================
+#  DispatcherTimer (remplace WinForms Timer)
+# ================================================================
+$timer          = New-Object System.Windows.Threading.DispatcherTimer
+$timer.Interval = [TimeSpan]::FromMilliseconds(200)
+
 $timer.Add_Tick({
     try {
+        # --- Lecture log download ---
         if ($script:logFile -and (Test-Path $script:logFile)) {
             $fs = $null
             try {
-                $fs = [System.IO.File]::Open($script:logFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+                $fs = [System.IO.File]::Open($script:logFile, 'Open', 'Read', 'ReadWrite')
                 if ($fs.Length -gt $script:logPos) {
                     $fs.Position = $script:logPos
-                    $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
-                    $chunk  = $reader.ReadToEnd()
+                    $rdr   = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+                    $chunk = $rdr.ReadToEnd()
                     $script:logPos = $fs.Position
-                    if ($chunk) {
-                        Append-LogText $chunk
-                        $txtLog.SelectionStart = $txtLog.Text.Length
-                        $txtLog.ScrollToCaret()
-
-                        $pctMatches = [regex]::Matches($chunk, '\[download\]\s+(\d+(?:\.\d+)?)%')
-                        if ($pctMatches.Count -gt 0) {
-                            $last = $pctMatches[$pctMatches.Count - 1]
-                            $pct = [int][double]$last.Groups[1].Value
-                            if ($pct -lt 0) { $pct = 0 }
-                            if ($pct -gt 100) { $pct = 100 }
-                            $progressBar.Value = $pct
+                    if ($chunk -and $script:currentItem) {
+                        $ms = [regex]::Matches($chunk, '\[download\]\s+(\d+(?:\.\d+)?)%')
+                        if ($ms.Count -gt 0) {
+                            $pct = [int][double]$ms[$ms.Count-1].Groups[1].Value
+                            $script:currentItem.Progress = [Math]::Max(0,[Math]::Min(100,$pct))
                         }
                     }
                 }
-            } finally {
-                if ($fs) { $fs.Dispose() }
-            }
+            } finally { if ($fs) { $fs.Dispose() } }
         }
 
+        # --- Process terminé ---
         if ($script:running -and $script:proc -and $script:proc.HasExited) {
-            $script:running    = $false
             $exit = $script:proc.ExitCode
-            $btnGo.Enabled     = $true
-            $btnCancel.Enabled = $false
-            if ($exit -eq 0) {
-                $progressBar.Value   = 100
-                $lblStatus.Text      = 'Termine  ✔'
-                $lblStatus.ForeColor = $cOk
-            } else {
-                $lblStatus.Text      = "Echec (code $exit)"
-                $lblStatus.ForeColor = $cDanger
+            if ($script:currentItem) {
+                if ($exit -eq 0) { $script:currentItem.Status = 'Termine'; $script:currentItem.Progress = 100 }
+                else             { $script:currentItem.Status = "Echec ($exit)" }
             }
+            $script:running     = $false
+            $script:currentItem = $null
+            if ($script:logFile) { try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}; $script:logFile = $null }
+            # Passe au suivant
+            Start-NextDownload
         }
 
-        # Vérification update (une seule fois, en tâche de fond)
-        if ($script:updateJob -and $script:updateJob.State -in @('Completed','Failed','Stopped')) {
+        # --- Preview job ---
+        if ($script:previewJob -and $script:previewJob.State -in @('Completed','Failed')) {
             try {
-                $result = Receive-Job -Job $script:updateJob -ErrorAction SilentlyContinue
-                if ($result -and $result.Latest) {
-                    if ((Compare-Version -Va $result.Latest -Vb $AppVersion) -gt 0) {
-                        $script:updateAvailable = $result
-                        # Bandeau de notif discret
-                        $lblStatus.Text      = "Mise a jour $($result.Latest) dispo — cliquer ici"
-                        $lblStatus.ForeColor = $cWarn
-                        $lblStatus.Cursor = [System.Windows.Forms.Cursors]::Hand
-                        $lblStatus.Add_Click({
-                            try {
-                                if ($script:updateAvailable -and $script:updateAvailable.DownloadUrl) {
-                                    Start-Process $script:updateAvailable.DownloadUrl
-                                }
-                            } catch {}
-                        })
+                $info = Receive-Job $script:previewJob -ErrorAction SilentlyContinue
+                if ($info) {
+                    $TxtPreviewLoading.Visibility = 'Collapsed'
+                    $TxtPreviewTitle.Text   = if ($info.title)      { $info.title }    else { '' }
+                    $TxtPreviewChannel.Text = if ($info.uploader)   { $info.uploader } else { '' }
+                    $dur = if ($info.duration) {
+                        $ts = [TimeSpan]::FromSeconds([int]$info.duration)
+                        if ($ts.Hours -gt 0) { "{0}:{1:D2}:{2:D2}" -f $ts.Hours,$ts.Minutes,$ts.Seconds }
+                        else                 { "{0}:{1:D2}" -f $ts.Minutes,$ts.Seconds }
+                    } else { '' }
+                    $TxtPreviewDuration.Text = $dur
+                    # Thumbnail
+                    if ($info.thumbnail) {
+                        try {
+                            $wc    = New-Object System.Net.WebClient
+                            $bytes = $wc.DownloadData($info.thumbnail)
+                            $ms2   = New-Object System.IO.MemoryStream($bytes, 0, $bytes.Length)
+                            $bmp   = New-Object System.Windows.Media.Imaging.BitmapImage
+                            $bmp.BeginInit()
+                            $bmp.StreamSource = $ms2
+                            $bmp.CacheOption  = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+                            $bmp.EndInit()
+                            $bmp.Freeze()
+                            $ImgThumb.Source = $bmp
+                        } catch {}
+                    }
+                } else {
+                    $PreviewCard.Visibility = 'Collapsed'
+                }
+            } catch {}
+            Remove-Job $script:previewJob -Force -ErrorAction SilentlyContinue
+            $script:previewJob = $null
+        }
+
+        # --- App update job ---
+        if ($script:updateJob -and $script:updateJob.State -in @('Completed','Failed')) {
+            try {
+                $res = Receive-Job $script:updateJob -ErrorAction SilentlyContinue
+                if ($res -and (Compare-Version $res.Tag $AppVersion) -gt 0) {
+                    $script:updateAvail        = $res
+                    $TxtUpdateBadge.Text       = "⬆ v$($res.Tag) dispo"
+                    $TxtUpdateBadge.Visibility = 'Visible'
+                }
+            } catch {}
+            Remove-Job $script:updateJob -Force -ErrorAction SilentlyContinue
+            $script:updateJob = $null
+        }
+
+        # --- yt-dlp version job ---
+        if ($script:ytdlpVerJob -and $script:ytdlpVerJob.State -in @('Completed','Failed')) {
+            try {
+                $latestYtdlp = Receive-Job $script:ytdlpVerJob -ErrorAction SilentlyContinue
+                if ($latestYtdlp) {
+                    # Version locale
+                    $localVer = ''
+                    if ($ytdlp) {
+                        try { $localVer = (& $ytdlp --version 2>$null).Trim() } catch {}
+                    }
+                    $TxtYtdlpVer.Text = "yt-dlp $localVer"
+                    if ($localVer -and $latestYtdlp -and $localVer -ne $latestYtdlp) {
+                        $TxtYtdlpVer.Text       = "yt-dlp $localVer (latest: $latestYtdlp)"
+                        $TxtYtdlpVer.Foreground = [System.Windows.Media.Brushes]::Orange
+                        $BtnUpdateYtdlp.Visibility = 'Visible'
+                    } else {
+                        $TxtYtdlpVer.Foreground = [System.Windows.Media.Brushes]::DimGray
                     }
                 }
             } catch {}
-            Remove-Job -Job $script:updateJob -Force -ErrorAction SilentlyContinue
-            $script:updateJob = $null
+            Remove-Job $script:ytdlpVerJob -Force -ErrorAction SilentlyContinue
+            $script:ytdlpVerJob = $null
         }
-    } catch {
-        Write-Crash -Where 'Timer.Tick' -ErrObj $_
-    }
+
+        # --- Update yt-dlp job ---
+        if ($script:updateYtdlpJob -and $script:updateYtdlpJob.State -in @('Completed','Failed')) {
+            try {
+                $newVer = Receive-Job $script:updateYtdlpJob -ErrorAction SilentlyContinue
+                if ($newVer) {
+                    $TxtStatus.Text       = "yt-dlp mis a jour : $newVer  ✔"
+                    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
+                    $TxtYtdlpVer.Text     = "yt-dlp $newVer"
+                    $BtnUpdateYtdlp.Visibility = 'Collapsed'
+                } else {
+                    $TxtStatus.Text       = "Echec mise a jour yt-dlp"
+                    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::Tomato
+                }
+            } catch {}
+            Remove-Job $script:updateYtdlpJob -Force -ErrorAction SilentlyContinue
+            $script:updateYtdlpJob  = $null
+            $BtnUpdateYtdlp.IsEnabled = $true
+        }
+
+    } catch { Write-Crash 'DispatcherTimer.Tick' $_ }
 })
+
 $timer.Start()
 
-# ----------------- Click: download -----------------
-
-$btnGo.Add_Click({
-    try {
-        if ($script:running) { return }
-
-        $cleanedUrl = Clean-YouTubeUrl -RawUrl $cmbUrl.Text
-        if ([string]::IsNullOrWhiteSpace($cleanedUrl) -or $cleanedUrl -notmatch '^https?://') {
-            [System.Windows.Forms.MessageBox]::Show('URL YouTube invalide. Colle un lien complet.', $AppName, 'OK', 'Warning') | Out-Null
-            return
-        }
-        $cmbUrl.Text = $cleanedUrl
-
-        # Sauvegarde dans l'historique
-        Save-HistoryUrl -Url $cleanedUrl
-        $cmbUrl.Items.Clear()
-        foreach ($h in $historyList) { $cmbUrl.Items.Add($h) | Out-Null }
-
-        if (-not $ytdlp) { [System.Windows.Forms.MessageBox]::Show('yt-dlp introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
-        if (-not $ffmpeg) { [System.Windows.Forms.MessageBox]::Show('ffmpeg introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
-
-        $out = $txtOut.Text
-        if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
-
-        $ytArgs = New-Object System.Collections.Generic.List[string]
-        if ($rdoMp3.Checked) {
-            $ytArgs.Add('-x'); $ytArgs.Add('--audio-format'); $ytArgs.Add('mp3')
-            $ytArgs.Add('--audio-quality'); $ytArgs.Add('0')
-        } else {
-            $ytArgs.Add('-f'); $ytArgs.Add('bv*+ba/b')
-            $ytArgs.Add('--merge-output-format'); $ytArgs.Add('mp4')
-        }
-        if ($chkPlaylist.Checked) { $ytArgs.Add('--yes-playlist') } else { $ytArgs.Add('--no-playlist') }
-        if ($chkSubs.Checked) {
-            $ytArgs.Add('--write-subs'); $ytArgs.Add('--write-auto-subs')
-            $ytArgs.Add('--sub-langs'); $ytArgs.Add('fr,en')
-            $ytArgs.Add('--convert-subs'); $ytArgs.Add('srt')
-        }
-        $template = if ($chkPlaylist.Checked) {
-            Join-Path $out '%(playlist_title)s\%(playlist_index)s - %(title)s.%(ext)s'
-        } else {
-            Join-Path $out '%(title)s.%(ext)s'
-        }
-        $ytArgs.Add('--ffmpeg-location'); $ytArgs.Add((Split-Path -Parent $ffmpeg))
-        $ytArgs.Add('-o'); $ytArgs.Add($template)
-        $ytArgs.Add('--newline'); $ytArgs.Add('--no-mtime')
-        $ytArgs.Add('--encoding'); $ytArgs.Add('utf-8')
-        $ytArgs.Add($cleanedUrl)
-
-        $argString = ($ytArgs | ForEach-Object { Quote-Arg $_ }) -join ' '
-
-        $script:logFile = Join-Path $env:TEMP ("yt-grab-" + [Guid]::NewGuid().ToString('N') + ".log")
-        $script:logPos  = 0
-        New-Item -ItemType File -Path $script:logFile -Force | Out-Null
-
-        $cmdLine = "chcp 65001 >nul & `"$ytdlp`" $argString > `"$($script:logFile)`" 2>&1"
-
-        $btnGo.Enabled     = $false
-        $btnCancel.Enabled = $true
-        $progressBar.Value = 0
-        $lblStatus.Text      = 'Telechargement en cours...'
-        $lblStatus.ForeColor = $cAccent
-        $txtLog.Clear()
-        Append-LogText ("> " + $ytdlp + " " + $argString + [Environment]::NewLine + [Environment]::NewLine)
-
-        $script:proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $cmdLine) -WindowStyle Hidden -PassThru
-        $script:running = $true
-    } catch {
-        Write-Crash -Where 'btnGo.Click' -ErrObj $_
-        $btnGo.Enabled     = $true
-        $btnCancel.Enabled = $false
-        $lblStatus.Text      = "Erreur — voir yt-grab-crash.log"
-        $lblStatus.ForeColor = $cDanger
-        try { Append-LogText (($_ | Out-String) + [Environment]::NewLine) } catch {}
-    }
-})
-
-try {
-    [void]$form.ShowDialog()
-} catch {
-    Write-Crash -Where 'ShowDialog' -ErrObj $_
+# ================================================================
+#  Statut initial (outils)
+# ================================================================
+if ($ytdlp -and $ffmpeg) {
+    $TxtStatus.Text       = 'Pret'
+    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
+} else {
+    $TxtStatus.Text       = 'yt-dlp ou ffmpeg introuvable'
+    $TxtStatus.Foreground = [System.Windows.Media.Brushes]::Tomato
 }
+
+# ================================================================
+#  Lancement
+# ================================================================
+try {
+    $window.ShowDialog() | Out-Null
+} catch {
+    Write-Crash 'ShowDialog' $_
+}
+
 $timer.Stop()
 
-if ($script:updateJob) {
-    try { Remove-Job -Job $script:updateJob -Force -ErrorAction SilentlyContinue } catch {}
+# Nettoyage jobs
+foreach ($j in @($script:updateJob,$script:ytdlpVerJob,$script:previewJob,$script:updateYtdlpJob)) {
+    if ($j) { try { Remove-Job $j -Force -ErrorAction SilentlyContinue } catch {} }
 }
-
 if ($script:logFile -and (Test-Path $script:logFile)) {
     try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}
 }
