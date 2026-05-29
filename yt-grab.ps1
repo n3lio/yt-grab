@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.0'
+$AppVersion = '2.0.1'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -832,7 +832,7 @@ $CmbUrl.Add_TextChanged({
             # Lance le job
             $ytdlpPath = $ytdlp
             $script:previewJob = Start-Job -ScriptBlock {
-                param($ ytPath, $url)
+                param($ytPath, $url)
                 try {
                     $json = & $ytPath --dump-json --no-playlist --no-warnings $url 2>$null | Select-Object -First 1
                     if ($json) { return $json | ConvertFrom-Json }
