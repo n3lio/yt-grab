@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.3'
+$AppVersion = '2.0.4'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -310,15 +310,32 @@ using System.ComponentModel;
 public class QueueItem : INotifyPropertyChanged {
     private string _url;
     private string _title;
+    private string _artist;
     private string _status;
     private int    _progress;
     private string _format;
 
     public string Url      { get { return _url; }      set { _url = value;      OnChanged("Url"); } }
-    public string Title    { get { return _title; }    set { _title = value;    OnChanged("Title"); } }
-    public string Status   { get { return _status; }   set { _status = value;   OnChanged("Status"); } }
+    public string Title    { get { return _title; }    set { _title = value;    OnChanged("Title");    OnChanged("DisplayTitle"); } }
+    public string Artist   { get { return _artist; }   set { _artist = value;   OnChanged("Artist");   OnChanged("DisplayTitle"); } }
+    public string Status   { get { return _status; }   set { _status = value;   OnChanged("Status");   OnChanged("RetryVisible"); } }
     public int    Progress { get { return _progress; } set { _progress = value; OnChanged("Progress"); } }
     public string Format   { get { return _format; }   set { _format = value;   OnChanged("Format"); } }
+
+    // Titre affiché : "Artiste - Titre" si artiste connu, sinon juste le titre
+    public string DisplayTitle {
+        get {
+            if (!string.IsNullOrEmpty(_artist) && !string.IsNullOrEmpty(_title))
+                return _artist + " — " + _title;
+            if (!string.IsNullOrEmpty(_title)) return _title;
+            return _url;
+        }
+    }
+
+    // Bouton relancer visible si Annulé ou Echec
+    public string RetryVisible {
+        get { return (_status == "Annulé" || (_status != null && _status.StartsWith("Echec"))) ? "Visible" : "Collapsed"; }
+    }
 
     public event PropertyChangedEventHandler PropertyChanged;
     protected void OnChanged(string n) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(n)); }
@@ -406,7 +423,9 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                     Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <!-- TextElement.Foreground propagé explicitement pour que les enfants héritent -->
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -426,33 +445,90 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
     </Style>
 
     <!-- Style bouton danger -->
-    <Style x:Key="BtnDanger" TargetType="Button" BasedOn="{StaticResource BtnSecondary}">
-      <Setter Property="Foreground"  Value="#F85149"/>
-      <Setter Property="BorderBrush" Value="#F85149"/>
-      <Style.Triggers>
-        <Trigger Property="IsMouseOver" Value="True">
-          <Setter Property="Background" Value="#2A1414"/>
-        </Trigger>
-      </Style.Triggers>
+    <Style x:Key="BtnDanger" TargetType="Button">
+      <Setter Property="Background"      Value="#1E1E30"/>
+      <Setter Property="Foreground"      Value="#F85149"/>
+      <Setter Property="FontSize"        Value="12"/>
+      <Setter Property="Padding"         Value="14,0"/>
+      <Setter Property="Height"          Value="34"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush"     Value="#F85149"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#2A1414"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#1A0A0A"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Style bouton ok (vert, pour relancer) -->
+    <Style x:Key="BtnOk" TargetType="Button">
+      <Setter Property="Background"      Value="#1E1E30"/>
+      <Setter Property="Foreground"      Value="#3FB950"/>
+      <Setter Property="FontSize"        Value="12"/>
+      <Setter Property="Padding"         Value="14,0"/>
+      <Setter Property="Height"          Value="34"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush"     Value="#3FB950"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                TextElement.Foreground="{TemplateBinding Foreground}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#0A2A14"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="bd" Property="Opacity" Value="0.4"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <!-- TextBox dark -->
     <Style x:Key="TxtDark" TargetType="TextBox">
-      <Setter Property="Background"       Value="#1E1E30"/>
-      <Setter Property="Foreground"       Value="#E8E8F0"/>
-      <Setter Property="CaretBrush"       Value="#6366F1"/>
-      <Setter Property="BorderBrush"      Value="#2E2E4A"/>
-      <Setter Property="BorderThickness"  Value="1"/>
-      <Setter Property="Padding"          Value="10,6"/>
-      <Setter Property="FontSize"         Value="12"/>
-      <Setter Property="SelectionBrush"   Value="#6366F1"/>
+      <Setter Property="Background"            Value="#1E1E30"/>
+      <Setter Property="Foreground"            Value="#E8E8F0"/>
+      <Setter Property="CaretBrush"            Value="#6366F1"/>
+      <Setter Property="BorderBrush"           Value="#2E2E4A"/>
+      <Setter Property="BorderThickness"       Value="1"/>
+      <Setter Property="Padding"               Value="10,0"/>
+      <Setter Property="FontSize"              Value="12"/>
+      <Setter Property="SelectionBrush"        Value="#6366F1"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="TextBox">
             <Border x:Name="bd" CornerRadius="7" Background="{TemplateBinding Background}"
                     BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                     Padding="{TemplateBinding Padding}">
-              <ScrollViewer x:Name="PART_ContentHost"/>
+              <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsFocused" Value="True">
@@ -528,7 +604,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <Ellipse Width="10" Height="10" Fill="#6366F1" Margin="0,0,8,0"/>
             <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <TextBlock x:Name="TxtVersion" Text=" v2.0.2" Foreground="#8888AA" FontSize="11" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtVersion" Text="" Foreground="#8888AA" FontSize="11" VerticalAlignment="Center"/>
             <TextBlock x:Name="TxtYtdlpVer" Text="" Foreground="#555570" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
             <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="11"
                        VerticalAlignment="Center" Margin="10,0,0,0" Cursor="Hand"/>
@@ -689,21 +765,28 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
                   <Grid Margin="14,8">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="*"/>
-                      <ColumnDefinition Width="120"/>
-                      <ColumnDefinition Width="50"/>
-                      <ColumnDefinition Width="30"/>
+                      <ColumnDefinition Width="110"/>
+                      <ColumnDefinition Width="60"/>
+                      <ColumnDefinition Width="28"/>
+                      <ColumnDefinition Width="28"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding Title}" Foreground="#E8E8F0" FontSize="12"
+                      <TextBlock Text="{Binding DisplayTitle}" Foreground="#E8E8F0" FontSize="12"
                                  TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Text="{Binding Url}"   Foreground="#4A4A6A" FontSize="9"
+                      <TextBlock Text="{Binding Url}" Foreground="#4A4A6A" FontSize="9"
                                  TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <ProgressBar Grid.Column="1" Value="{Binding Progress}" Maximum="100" Minimum="0"
                                  Style="{StaticResource PrgDark}" VerticalAlignment="Center" Margin="10,0"/>
                     <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="#6B6B8A"
                                FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                    <Button Grid.Column="3" Content="✕" Tag="{Binding}" Width="22" Height="22"
+                    <!-- Bouton relancer (visible seulement si Annulé ou Echec) -->
+                    <Button Grid.Column="3" Content="↺" Tag="{Binding}" Width="24" Height="24"
+                            x:Name="BtnRetryItem"
+                            Style="{StaticResource BtnOk}" Padding="0" FontSize="13"
+                            VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Visibility="{Binding RetryVisible}"/>
+                    <Button Grid.Column="4" Content="✕" Tag="{Binding}" Width="24" Height="24"
                             x:Name="BtnRemoveItem"
                             Style="{StaticResource BtnDanger}" Padding="0" FontSize="10"
                             VerticalAlignment="Center" HorizontalAlignment="Center"/>
@@ -788,9 +871,110 @@ $BtnClose.Add_Click({ $window.Close() })
 $BtnMinimize.Add_Click({ $window.WindowState = 'Minimized' })
 
 $BtnAbout.Add_Click({
-    [System.Windows.MessageBox]::Show(
-        "$AppName v$AppVersion`nby $AppAuthor`n$AppRepo`n`nPowered by yt-dlp + ffmpeg",
-        'About', 'OK', 'Information') | Out-Null
+    try {
+        $aboutXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="À propos" Width="400" Height="300"
+        WindowStartupLocation="CenterOwner"
+        Background="#0E0E16" FontFamily="Segoe UI"
+        WindowStyle="None" AllowsTransparency="True"
+        ResizeMode="NoResize">
+  <Border CornerRadius="12" Background="#0E0E16" BorderBrush="#2E2E4A" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="40"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="60"/>
+      </Grid.RowDefinitions>
+
+      <!-- Title bar -->
+      <Border Grid.Row="0" CornerRadius="12,12,0,0" Background="#12121E" x:Name="AboutTitleBar">
+        <Grid Margin="16,0">
+          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Ellipse Width="8" Height="8" Fill="#6366F1" Margin="0,0,8,0"/>
+            <TextBlock Text="À propos" Foreground="#E8E8F0" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </StackPanel>
+          <Button x:Name="BtnAboutClose" Width="26" Height="26" HorizontalAlignment="Right" VerticalAlignment="Center"
+                  Background="#1E1E30" BorderBrush="#F85149" BorderThickness="1" Cursor="Hand">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="bd" CornerRadius="6" Background="{TemplateBinding Background}"
+                        BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                  <TextBlock Text="✕" Foreground="#F85149" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#2A1414"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+          </Button>
+        </Grid>
+      </Border>
+
+      <!-- Content -->
+      <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="30,0">
+        <!-- Logo area -->
+        <Border CornerRadius="16" Background="#1A1A28" BorderBrush="#3434A0" BorderThickness="1"
+                Width="64" Height="64" HorizontalAlignment="Center" Margin="0,0,0,16">
+          <TextBlock Text="▶" Foreground="#6366F1" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+        <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="18" FontWeight="Bold"
+                   HorizontalAlignment="Center"/>
+        <TextBlock x:Name="AboutVersion" Foreground="#6366F1" FontSize="12" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+        <TextBlock Text="by n3lio" Foreground="#6B6B8A" FontSize="11" HorizontalAlignment="Center" Margin="0,2,0,16"/>
+        <TextBlock Text="Powered by yt-dlp + ffmpeg" Foreground="#4A4A6A" FontSize="10"
+                   HorizontalAlignment="Center"/>
+        <TextBlock x:Name="AboutRepo" Foreground="#3E3EA0" FontSize="10" HorizontalAlignment="Center"
+                   Margin="0,4,0,0" Cursor="Hand" TextDecorations="Underline"/>
+      </StackPanel>
+
+      <!-- Footer OK button -->
+      <Border Grid.Row="2" CornerRadius="0,0,12,12" Background="#12121E">
+        <Button x:Name="BtnAboutOk" Content="Fermer" Width="110" Height="34"
+                HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="bd" CornerRadius="8" Background="#6366F1" Padding="18,0">
+                <TextBlock Text="Fermer" Foreground="White" FontSize="12" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="bd" Property="Background" Value="#818CF8"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="bd" Property="Background" Value="#4F52D4"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+      </Border>
+    </Grid>
+  </Border>
+</Window>
+"@
+        $aboutWin        = [Windows.Markup.XamlReader]::Parse($aboutXaml)
+        $aboutWin.Owner  = $window
+
+        # Bind values
+        $aboutWin.FindName('AboutVersion').Text = "v$AppVersion"
+        $repoTxt = $aboutWin.FindName('AboutRepo')
+        $repoTxt.Text = $AppRepo
+        $repoTxt.Add_MouseLeftButtonDown({ Start-Process $AppRepo })
+
+        # Drag
+        $aboutWin.FindName('AboutTitleBar').Add_MouseLeftButtonDown({ $aboutWin.DragMove() })
+
+        # Boutons
+        $aboutWin.FindName('BtnAboutClose').Add_Click({ $aboutWin.Close() })
+        $aboutWin.FindName('BtnAboutOk').Add_Click({ $aboutWin.Close() })
+
+        $aboutWin.ShowDialog() | Out-Null
+    } catch { Write-Crash 'BtnAbout' $_ }
 })
 
 # ================================================================
@@ -880,15 +1064,44 @@ $BtnAddQueue.Add_Click({
         $fmt = if ($RdoMp3.IsChecked) { 'MP3' } else { 'MP4' }
         $item = [QueueItem]::new()
         $item.Url      = $cleaned
-        $item.Title    = $cleaned   # sera remplacé par le vrai titre si preview disponible
+        $item.Title    = ''   # sera rempli par preview ou fetch background
+        $item.Artist   = ''
         $item.Status   = 'En attente'
         $item.Progress = 0
         $item.Format   = $fmt
 
-        # Récupère le titre depuis la preview si dispo
-        if ($TxtPreviewTitle.Text -and $TxtPreviewTitle.Text -ne '') { $item.Title = $TxtPreviewTitle.Text }
+        # Si la preview est déjà chargée, on l'utilise directement
+        if ($TxtPreviewTitle.Text -and $TxtPreviewTitle.Text -ne '') {
+            $item.Title  = $TxtPreviewTitle.Text
+            $item.Artist = $TxtPreviewChannel.Text
+        }
 
         $queueItems.Add($item)
+
+        # Si pas de titre → fetch en background
+        if (-not $item.Title) {
+            $itemRef   = $item
+            $ytdlpPath = $ytdlp
+            $urlRef    = $cleaned
+            Start-Job -ScriptBlock {
+                param($yp, $u)
+                try {
+                    $json = & $yp --dump-json --no-playlist --no-warnings $u 2>$null | Select-Object -First 1
+                    if ($json) {
+                        $info = $json | ConvertFrom-Json
+                        # artist > creator > uploader (du plus précis au moins précis)
+                        $art = if ($info.artist)  { $info.artist }
+                               elseif ($info.creator) { $info.creator }
+                               else { $info.uploader }
+                        return [PSCustomObject]@{ Title = $info.title; Artist = $art }
+                    }
+                } catch {}
+                return $null
+            } -ArgumentList $ytdlpPath, $urlRef | ForEach-Object {
+                # On stocke le job et la ref item ensemble pour le polling dans le Timer
+                $script:pendingMetaJobs += [PSCustomObject]@{ Job = $_; Item = $itemRef }
+            }
+        }
         $TxtQueueEmpty.Visibility = 'Collapsed'
         Save-HistoryUrl $cleaned
         $CmbUrl.Items.Clear()
@@ -898,18 +1111,24 @@ $BtnAddQueue.Add_Click({
     } catch { Write-Crash 'BtnAddQueue' $_ }
 })
 
-# Supprimer un item de la queue
+# Boutons dans la queue (supprimer + relancer)
 $LstQueue.AddHandler(
     [System.Windows.Controls.Button]::ClickEvent,
     [System.Windows.RoutedEventHandler]{
         param($s, $e)
-        if ($e.OriginalSource -is [System.Windows.Controls.Button] -and
-            $e.OriginalSource.Name -eq 'BtnRemoveItem') {
-            $item = $e.OriginalSource.Tag -as [QueueItem]
-            if ($item -and $item.Status -ne 'En cours') {
+        if (-not ($e.OriginalSource -is [System.Windows.Controls.Button])) { return }
+        $btn  = $e.OriginalSource
+        $item = $btn.Tag -as [QueueItem]
+        if (-not $item) { return }
+
+        if ($btn.Name -eq 'BtnRemoveItem') {
+            if ($item.Status -ne 'En cours') {
                 $queueItems.Remove($item) | Out-Null
                 if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
             }
+        } elseif ($btn.Name -eq 'BtnRetryItem') {
+            $item.Status   = 'En attente'
+            $item.Progress = 0
         }
     }
 )
@@ -944,11 +1163,12 @@ $BtnUpdateYtdlp.Add_Click({
 # ================================================================
 #  Processus de téléchargement
 # ================================================================
-$script:proc       = $null
-$script:logFile    = $null
-$script:logPos     = 0
-$script:running    = $false
-$script:currentItem = $null
+$script:proc            = $null
+$script:logFile         = $null
+$script:logPos          = 0
+$script:running         = $false
+$script:currentItem     = $null
+$script:pendingMetaJobs = [System.Collections.Generic.List[object]]::new()
 
 function Start-NextDownload {
     $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
@@ -1011,8 +1231,14 @@ function Start-NextDownload {
         $ytArgs.Add('--convert-subs'); $ytArgs.Add('srt')
     }
 
+    # Template nom de fichier :
+    # MP3 vidéo unique : "Artiste - Titre" (artist > creator > uploader, puis titre seul si rien)
+    # MP4 / playlist : comportement classique
     $template = if ($ChkPlaylist.IsChecked) {
         Join-Path $out '%(playlist_title)s\%(playlist_index)s - %(title)s.%(ext)s'
+    } elseif ($next.Format -eq 'MP3') {
+        # %(artist,creator,uploader)s = prend le premier champ non vide dans l'ordre
+        Join-Path $out '%(artist,creator,uploader)s - %(title)s.%(ext)s'
     } else {
         Join-Path $out '%(title)s.%(ext)s'
     }
@@ -1106,14 +1332,34 @@ $timer.Add_Tick({
             Start-NextDownload
         }
 
+        # --- Meta jobs (fetch titre/artiste pour items ajoutés sans preview) ---
+        if ($script:pendingMetaJobs.Count -gt 0) {
+            $done = @($script:pendingMetaJobs | Where-Object { $_.Job.State -in @('Completed','Failed') })
+            foreach ($entry in $done) {
+                try {
+                    $info = Receive-Job $entry.Job -ErrorAction SilentlyContinue
+                    if ($info -and $entry.Item) {
+                        if ($info.Title)  { $entry.Item.Title  = $info.Title }
+                        if ($info.Artist) { $entry.Item.Artist = $info.Artist }
+                    }
+                } catch {}
+                try { Remove-Job $entry.Job -Force -ErrorAction SilentlyContinue } catch {}
+                $script:pendingMetaJobs.Remove($entry) | Out-Null
+            }
+        }
+
         # --- Preview job ---
         if ($script:previewJob -and $script:previewJob.State -in @('Completed','Failed')) {
             try {
                 $info = Receive-Job $script:previewJob -ErrorAction SilentlyContinue
                 if ($info) {
                     $TxtPreviewLoading.Visibility = 'Collapsed'
-                    $TxtPreviewTitle.Text   = if ($info.title)      { $info.title }    else { '' }
-                    $TxtPreviewChannel.Text = if ($info.uploader)   { $info.uploader } else { '' }
+                    $TxtPreviewTitle.Text = if ($info.title) { $info.title } else { '' }
+                    # artist > creator > uploader
+                    $previewArtist = if ($info.artist)   { $info.artist }
+                                     elseif ($info.creator) { $info.creator }
+                                     else { $info.uploader }
+                    $TxtPreviewChannel.Text = if ($previewArtist) { $previewArtist } else { '' }
                     $dur = if ($info.duration) {
                         $ts = [TimeSpan]::FromSeconds([int]$info.duration)
                         if ($ts.Hours -gt 0) { "{0}:{1:D2}:{2:D2}" -f $ts.Hours,$ts.Minutes,$ts.Seconds }
