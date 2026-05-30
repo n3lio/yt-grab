@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.2'
+$AppVersion = '2.0.3'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -520,7 +520,6 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
       <Grid.RowDefinitions>
         <RowDefinition Height="42"/>   <!-- title bar -->
         <RowDefinition Height="*"/>    <!-- contenu -->
-        <RowDefinition Height="Auto"/> <!-- status bar -->
       </Grid.RowDefinitions>
 
       <!-- ===== TITLE BAR ===== -->
@@ -529,14 +528,22 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <Ellipse Width="10" Height="10" Fill="#6366F1" Margin="0,0,8,0"/>
             <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <TextBlock x:Name="TxtVersion" Text=" v2.0.0" Foreground="#4A4A6A" FontSize="11" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtVersion" Text=" v2.0.2" Foreground="#8888AA" FontSize="11" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtYtdlpVer" Text="" Foreground="#555570" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="11"
+                       VerticalAlignment="Center" Margin="10,0,0,0" Cursor="Hand"/>
           </StackPanel>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-            <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="10"
-                       VerticalAlignment="Center" Margin="0,0,12,0" Cursor="Hand"/>
-            <Button x:Name="BtnAbout"    Content="?"  Width="26" Height="26" Style="{StaticResource BtnSecondary}" FontWeight="Bold" Margin="0,0,6,0"/>
-            <Button x:Name="BtnMinimize" Content="─"  Width="26" Height="26" Style="{StaticResource BtnSecondary}" Margin="0,0,6,0"/>
-            <Button x:Name="BtnClose"    Content="✕"  Width="26" Height="26" Style="{StaticResource BtnDanger}"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" >
+            <!-- Boutons avec foreground explicite pour être visibles sur fond sombre -->
+            <Button x:Name="BtnAbout"    Width="28" Height="28" Style="{StaticResource BtnSecondary}" FontWeight="Bold" Margin="0,0,6,0">
+              <TextBlock Text="?" Foreground="#C0C0D8" FontSize="13" FontWeight="Bold"/>
+            </Button>
+            <Button x:Name="BtnMinimize" Width="28" Height="28" Style="{StaticResource BtnSecondary}" Margin="0,0,6,0">
+              <TextBlock Text="─" Foreground="#C0C0D8" FontSize="13"/>
+            </Button>
+            <Button x:Name="BtnClose"    Width="28" Height="28" Style="{StaticResource BtnDanger}">
+              <TextBlock Text="✕" Foreground="#F85149" FontSize="13"/>
+            </Button>
           </StackPanel>
         </Grid>
       </Border>
@@ -594,7 +601,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
                 Margin="0,0,0,10" Padding="14,10">
           <WrapPanel>
             <StackPanel Orientation="Horizontal" Margin="0,0,24,0">
-              <TextBlock Text="Format :" Foreground="#6B6B8A" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <TextBlock Text="Format :" Foreground="#9090B0" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
               <RadioButton x:Name="RdoMp3" Content="MP3 (320k)" Style="{StaticResource RdoDark}" IsChecked="True" GroupName="fmt"/>
               <RadioButton x:Name="RdoMp4" Content="MP4 (best)" Style="{StaticResource RdoDark}" GroupName="fmt"/>
             </StackPanel>
@@ -611,8 +618,8 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <ColumnDefinition Width="Auto"/>
             <ColumnDefinition Width="Auto"/>
           </Grid.ColumnDefinitions>
-          <TextBox x:Name="TxtOut" Grid.Column="0" Height="34" Style="{StaticResource TxtDark}"
-                   IsReadOnly="True" Margin="0,0,8,0"/>
+          <TextBox x:Name="TxtOut" Grid.Column="0" Height="36" Style="{StaticResource TxtDark}"
+                   IsReadOnly="True" Margin="0,0,8,0" VerticalContentAlignment="Center"/>
           <Button x:Name="BtnBrowse" Grid.Column="1" Content="Changer" Style="{StaticResource BtnSecondary}"
                   Width="80" Margin="0,0,8,0"/>
           <Button x:Name="BtnOpen"   Grid.Column="2" Content="📂 Ouvrir" Style="{StaticResource BtnSecondary}"
@@ -632,7 +639,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
           <Button x:Name="BtnCancel"   Grid.Column="1" Content="✕  Annuler"
                   Style="{StaticResource BtnDanger}"   Width="110" IsEnabled="False" Margin="0,0,8,0"/>
           <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
-            <TextBlock x:Name="TxtStatus" Text="Pret" Foreground="#3FB950" FontSize="11" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtStatus" Text="Prêt" Foreground="#3FB950" FontSize="12" VerticalAlignment="Center"/>
           </StackPanel>
           <Button x:Name="BtnUpdateYtdlp" Grid.Column="3" Content="↑ yt-dlp"
                   Style="{StaticResource BtnSecondary}" Width="90" Visibility="Collapsed"/>
@@ -649,10 +656,10 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <!-- Header queue -->
             <Border Grid.Row="0" Background="#14141E" CornerRadius="9,9,0,0" Padding="14,0">
               <Grid>
-                <TextBlock Text="File d'attente" Foreground="#6B6B8A" FontSize="11"
+                <TextBlock Text="File d'attente" Foreground="#9090B0" FontSize="12"
                            FontWeight="SemiBold" VerticalAlignment="Center"/>
                 <Button x:Name="BtnClearDone" Content="Effacer terminés" HorizontalAlignment="Right"
-                        Style="{StaticResource BtnSecondary}" Height="24" Padding="10,0" FontSize="10"
+                        Style="{StaticResource BtnSecondary}" Height="26" Padding="12,0" FontSize="12"
                         VerticalAlignment="Center"/>
               </Grid>
             </Border>
@@ -707,22 +714,12 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <!-- Placeholder queue vide -->
             <TextBlock Grid.Row="1" x:Name="TxtQueueEmpty"
                        Text="Colle une URL ci-dessus et clique + Ajouter"
-                       Foreground="#2E2E4A" FontSize="12" HorizontalAlignment="Center"
+                       Foreground="#4A4A70" FontSize="12" HorizontalAlignment="Center"
                        VerticalAlignment="Center" IsHitTestVisible="False"/>
           </Grid>
         </Border>
       </Grid>
 
-      <!-- ===== STATUS BAR ===== -->
-      <Border Grid.Row="2" CornerRadius="0,0,12,12" Background="#0A0A12" Padding="16,6">
-        <Grid>
-          <StackPanel Orientation="Horizontal">
-            <TextBlock x:Name="TxtYtdlpVer" Text="yt-dlp ..." Foreground="#2E2E4A" FontSize="10" VerticalAlignment="Center"/>
-          </StackPanel>
-          <TextBlock Text="by n3lio" HorizontalAlignment="Right" Foreground="#2A2A40"
-                     FontSize="10" VerticalAlignment="Center" FontStyle="Italic"/>
-        </Grid>
-      </Border>
 
     </Grid>
   </Border>
@@ -918,7 +915,7 @@ $LstQueue.AddHandler(
 )
 
 $BtnClearDone.Add_Click({
-    $done = @($queueItems | Where-Object { $_.Status -in @('Termine','Echec','Annule') })
+    $done = @($queueItems | Where-Object { $_.Status -in @('Terminé','Echec','Annulé') })
     foreach ($d in $done) { $queueItems.Remove($d) | Out-Null }
     if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
 })
@@ -959,7 +956,7 @@ function Start-NextDownload {
         $script:running = $false
         $BtnStartAll.IsEnabled = $true
         $BtnCancel.IsEnabled   = $false
-        $TxtStatus.Text      = 'Tout termine  ✔'
+        $TxtStatus.Text      = 'Tout terminé ✔'
         $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
         # Toast Windows
         try {
@@ -1058,11 +1055,11 @@ $BtnCancel.Add_Click({
     if ($script:proc -and -not $script:proc.HasExited) {
         Start-Process 'taskkill' -ArgumentList @('/F','/T','/PID',$script:proc.Id.ToString()) -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
     }
-    if ($script:currentItem) { $script:currentItem.Status = 'Annule'; $script:currentItem.Progress = 0 }
+    if ($script:currentItem) { $script:currentItem.Status = 'Annulé'; $script:currentItem.Progress = 0 }
     $script:running        = $false
     $BtnStartAll.IsEnabled = $true
     $BtnCancel.IsEnabled   = $false
-    $TxtStatus.Text        = 'Annule.'
+    $TxtStatus.Text        = 'Annulé.'
     $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::Orange
 })
 
@@ -1099,7 +1096,7 @@ $timer.Add_Tick({
         if ($script:running -and $script:proc -and $script:proc.HasExited) {
             $exit = $script:proc.ExitCode
             if ($script:currentItem) {
-                if ($exit -eq 0) { $script:currentItem.Status = 'Termine'; $script:currentItem.Progress = 100 }
+                if ($exit -eq 0) { $script:currentItem.Status = 'Terminé'; $script:currentItem.Progress = 100 }
                 else             { $script:currentItem.Status = "Echec ($exit)" }
             }
             $script:running     = $false
@@ -1212,7 +1209,7 @@ $timer.Start()
 #  Statut initial (outils)
 # ================================================================
 if ($ytdlp -and $ffmpeg) {
-    $TxtStatus.Text       = 'Pret'
+    $TxtStatus.Text       = 'Prêt'
     $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
 } else {
     $TxtStatus.Text       = 'yt-dlp ou ffmpeg introuvable'
