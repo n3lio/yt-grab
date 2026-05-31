@@ -92,13 +92,13 @@ jobs:
             ## YouTube Grabber v${{ steps.version.outputs.VERSION }}
 
             ### Installation
-            1. Télécharge `yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe` ci-dessous
-            2. Double-clique et suis l'installeur
-            3. Lance *YouTube Grabber* depuis le Bureau ou le Menu Démarrer
+            1. Download `yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe` below
+            2. Double-click and follow the installer
+            3. Launch *YouTube Grabber* from the Desktop or Start Menu
 
-            ### Prérequis
+            ### Requirements
             - Windows 10/11
-            - Rien d'autre — yt-dlp et ffmpeg sont téléchargés automatiquement au premier lancement ✔
+            - Nothing else — yt-dlp and ffmpeg are downloaded automatically on first launch ✔
           files: dist/yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe
           draft: false
           prerelease: false
