@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.2.2'
+$AppVersion = '2.2.4'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -832,7 +832,7 @@ Load-QueueFromConfig
             <TextBlock x:Name="TxtVersion" Text="" Foreground="#8888AA" FontSize="11" VerticalAlignment="Center"/>
             <TextBlock x:Name="TxtGlobalProgress" Text="" Foreground="#6B6BAA" FontSize="10"
                        VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
-            <TextBlock x:Name="TxtYtdlpVer" Text="" Foreground="#555570" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            <TextBlock x:Name="TxtYtdlpVer" Text="" Foreground="#555570" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"/>
             <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="11"
                        VerticalAlignment="Center" Margin="10,0,0,0" Cursor="Hand"/>
           </StackPanel>
@@ -2231,7 +2231,7 @@ $timer.Add_Tick({
                 $res = Receive-Job $script:updateJob -ErrorAction SilentlyContinue
                 if ($res -and (Compare-Version $res.Tag $AppVersion) -gt 0) {
                     $script:updateAvail        = $res
-                    $TxtUpdateBadge.Text       = "⬆ v$($res.Tag) available"
+                    $TxtUpdateBadge.Text       = "⬆ $($res.Tag) available"
                     $TxtUpdateBadge.Visibility = 'Visible'
                 }
             } catch {}
