@@ -9,7 +9,7 @@
 
 #define AppName      "YouTube Grabber by n3lio"
 #define AppShortName "YouTube Grabber"
-#define AppVersion   "2.1.0"
+#define AppVersion   "2.1.1"
 #define AppPublisher "n3lio"
 #define AppURL       "https://github.com/n3lio/yt-grab"
 #define AppExe       "yt-grab.exe"
@@ -64,6 +64,14 @@ Name: "{group}\{#AppName}";           Filename: "{app}\{#AppExe}"; IconFilename:
 Name: "{group}\Désinstaller {#AppName}"; Filename: "{uninstallexe}";                                    Tasks: startmenuicon
 ; Bureau
 Name: "{autodesktop}\{#AppName}";     Filename: "{app}\{#AppExe}"; IconFilename: "{app}\yt-grab.ico"; Tasks: desktopicon
+
+[UninstallDelete]
+; Supprime les fichiers générés à l'usage (non installés par le setup)
+Type: files;     Name: "{app}\yt-dlp.exe"
+Type: files;     Name: "{app}\ffmpeg.exe"
+Type: files;     Name: "{app}\ytgrabber.config.json"
+Type: files;     Name: "{app}\ytgrabber-crash.log"
+Type: filesandordirs; Name: "{app}"
 
 [Run]
 ; Proposition de lancer l'app après installation

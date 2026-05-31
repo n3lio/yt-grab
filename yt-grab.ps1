@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.1.0'
+$AppVersion = '2.1.1'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -726,18 +726,22 @@ Load-QueueFromConfig
       </Setter>
     </Style>
 
-    <!-- ProgressBar dark -->
+    <!-- ProgressBar dark — Grid avec colonne * pour fill correct -->
     <Style x:Key="PrgDark" TargetType="ProgressBar">
-      <Setter Property="Background" Value="#1E1E30"/>
-      <Setter Property="Foreground" Value="#6366F1"/>
-      <Setter Property="Height"     Value="8"/>
+      <Setter Property="Background"    Value="#1E1E30"/>
+      <Setter Property="Foreground"    Value="#6366F1"/>
+      <Setter Property="Height"        Value="8"/>
+      <Setter Property="BorderThickness" Value="0"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ProgressBar">
-            <Border CornerRadius="3" Background="{TemplateBinding Background}" ClipToBounds="True">
-              <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left"
-                      Background="{TemplateBinding Foreground}"/>
-            </Border>
+            <Grid x:Name="TemplateRoot" SnapsToDevicePixels="True">
+              <Border CornerRadius="4" Background="{TemplateBinding Background}"/>
+              <Border x:Name="PART_Track" CornerRadius="4" Background="Transparent"/>
+              <Grid x:Name="PART_Indicator" ClipToBounds="True" HorizontalAlignment="Left">
+                <Border x:Name="Indicator" CornerRadius="4" Background="{TemplateBinding Foreground}"/>
+              </Grid>
+            </Grid>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
@@ -895,11 +899,19 @@ Load-QueueFromConfig
                       Margin="2,0,0,0"/>
               </Border>
               <!-- ComboBox sans bordure, s'intègre dans le wrapper -->
-              <ComboBox x:Name="CmbUrl" Grid.Column="1" Height="36"
-                        IsEditable="True" Text="" FontSize="12"
-                        Background="Transparent" Foreground="#E8E8F0"
-                        BorderThickness="0" VerticalContentAlignment="Center"
-                        Style="{StaticResource CmbDark}"/>
+              <Grid Grid.Column="1">
+                <ComboBox x:Name="CmbUrl" Height="36"
+                          IsEditable="True" Text="" FontSize="12"
+                          Background="Transparent" Foreground="#E8E8F0"
+                          BorderThickness="0" VerticalContentAlignment="Center"
+                          Style="{StaticResource CmbDark}"/>
+                <!-- Placeholder visible quand le champ est vide -->
+                <TextBlock x:Name="TxtUrlPlaceholder"
+                           Text="Colle une URL YouTube ici…"
+                           Foreground="#44446A" FontSize="12" FontStyle="Italic"
+                           VerticalAlignment="Center" HorizontalAlignment="Left"
+                           Margin="4,0,0,0" IsHitTestVisible="False"/>
+              </Grid>
             </Grid>
           </Border>
           <Button x:Name="BtnAddQueue" Grid.Column="1" Content="+ Ajouter" Style="{StaticResource BtnPrimary}"
@@ -1163,7 +1175,8 @@ $BtnAbout        = Find-Ctrl 'BtnAbout'
 $BtnMinimize     = Find-Ctrl 'BtnMinimize'
 $BtnClose        = Find-Ctrl 'BtnClose'
 $CmbUrl          = Find-Ctrl 'CmbUrl'
-$BtnAddQueue     = Find-Ctrl 'BtnAddQueue'
+$BtnAddQueue          = Find-Ctrl 'BtnAddQueue'
+$TxtUrlPlaceholder    = Find-Ctrl 'TxtUrlPlaceholder'
 $PreviewCard     = Find-Ctrl 'PreviewCard'
 $ImgThumb        = Find-Ctrl 'ImgThumb'
 $TxtPreviewTitle  = Find-Ctrl 'TxtPreviewTitle'
@@ -1189,6 +1202,23 @@ $LstQueue        = Find-Ctrl 'LstQueue'
 $TxtQueueEmpty   = Find-Ctrl 'TxtQueueEmpty'
 $BtnClearDone    = Find-Ctrl 'BtnClearDone'
 $TxtYtdlpVer     = Find-Ctrl 'TxtYtdlpVer'
+
+# ================================================================
+#  Helpers UI (définis après parse XAML, avant tout appel)
+# ================================================================
+function Update-GlobalProgress {
+    $total = $queueItems.Count
+    $done  = @($queueItems | Where-Object { $_.Status -eq 'Terminé' }).Count
+    if ($total -gt 0) {
+        $pct = [int](($done / $total) * 100)
+        $PrgGlobal.Value = $pct
+        $TxtGlobalProgress.Text       = "$done/$total"
+        $TxtGlobalProgress.Visibility = 'Visible'
+    } else {
+        $PrgGlobal.Value = 0
+        $TxtGlobalProgress.Visibility = 'Collapsed'
+    }
+}
 
 # Init valeurs
 $TxtVersion.Text = " v$AppVersion"
@@ -1381,10 +1411,12 @@ $BtnAbout.Add_Click({
 
 # ================================================================
 #  Raccourci Entrée sur l'URL → Ajouter
+#  (PreviewKeyDown bubble depuis le TextBox interne du ComboBox)
 # ================================================================
-$window.Add_KeyDown({
+$CmbUrl.Add_PreviewKeyDown({
     param($s, $e)
-    if ($e.Key -eq 'Return' -and $CmbUrl.IsFocused) {
+    if ($e.Key -eq 'Return') {
+        $e.Handled = $true
         $BtnAddQueue.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
     }
 })
@@ -1434,6 +1466,10 @@ $CmbUrl.AddHandler(
     [System.Windows.Controls.TextChangedEventHandler]{
         try {
             $raw      = $CmbUrl.Text.Trim()
+            # Placeholder
+            if ($TxtUrlPlaceholder) {
+                $TxtUrlPlaceholder.Visibility = if ($raw -eq '') { 'Visible' } else { 'Collapsed' }
+            }
             $detected = Detect-UrlType $raw
             if ($detected -eq 'playlist')  { $ChkPlaylist.IsChecked = $true }
             elseif ($detected -eq 'video') { $ChkPlaylist.IsChecked = $false }
@@ -1623,21 +1659,6 @@ $script:logPos          = 0
 $script:running         = $false
 $script:currentItem     = $null
 $script:pendingMetaJobs = [System.Collections.Generic.List[object]]::new()
-
-function Update-GlobalProgress {
-    $total    = $queueItems.Count
-    $done     = @($queueItems | Where-Object { $_.Status -eq 'Terminé' }).Count
-    $failed   = @($queueItems | Where-Object { $_.Status -like 'Echec*' -or $_.Status -eq 'Annulé' }).Count
-    if ($total -gt 0) {
-        $pct = [int](($done / $total) * 100)
-        $PrgGlobal.Value = $pct
-        $TxtGlobalProgress.Text       = "$done/$total"
-        $TxtGlobalProgress.Visibility = 'Visible'
-    } else {
-        $PrgGlobal.Value = 0
-        $TxtGlobalProgress.Visibility = 'Collapsed'
-    }
-}
 
 function Start-NextDownload {
     $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
