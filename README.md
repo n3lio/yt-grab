@@ -1,44 +1,45 @@
 # YouTube Grabber by n3lio
 
-Télécharge des vidéos et musiques YouTube en double-clic. Pas de terminal, pas de prérequis à installer manuellement.
+Download YouTube videos and music in one double-click. No terminal, no manual setup.
 
 ## Installation
 
-1. Va sur la page [**Releases**](https://github.com/n3lio/yt-grab/releases/latest)
-2. Télécharge `yt-grab-X.X.X-setup.exe`
-3. Double-clique, suis l'installeur (moins de 30 secondes)
-4. Lance **YouTube Grabber** depuis le Bureau ou le Menu Démarrer
+1. Go to the [**Releases**](https://github.com/n3lio/yt-grab/releases/latest) page
+2. Download `yt-grab-X.X.X-setup.exe`
+3. Double-click, follow the installer (under 30 seconds)
+4. Launch **YouTube Grabber** from the Desktop or Start Menu
 
-> **yt-dlp** et **ffmpeg** sont téléchargés automatiquement au premier lancement. Aucune installation manuelle requise.
+> **yt-dlp** and **ffmpeg** are downloaded automatically on first launch. Nothing to install manually.
 
-## Prérequis
+## Requirements
 
-- Windows 10 ou 11
+- Windows 10 or 11
 
-C'est tout.
+That's it.
 
-## Utilisation
+## Usage
 
-1. Colle une URL YouTube dans le champ en haut (vidéo, playlist, Shorts) — ou glisse-dépose depuis le navigateur
-2. Choisis le format : **MP3** (320k), **WAV** (lossless) ou **MP4** (meilleure qualité)
-3. Options : playlist complète, sous-titres, métadonnées + cover art
-4. Clique **+ Ajouter** ou appuie sur **Entrée**
-5. Clique **⬇ Tout télécharger**
+1. Paste a YouTube URL in the top field (video, playlist, Shorts) — or drag & drop from your browser
+2. Pick a format: **MP3** (320k), **WAV** (lossless) or **MP4** (best quality)
+3. Options: full playlist, subtitles, metadata + cover art
+4. Click **+ Add** or press **Enter**
+5. Click **⬇ Download all**
 
-Tu peux ajouter plusieurs URLs avant de lancer — la file d'attente traite tout dans l'ordre, avec progression et vitesse en temps réel.
+You can queue multiple URLs before starting — the queue processes them in order with real-time progress and speed.
 
-## Fonctionnalités
+## Features
 
-- File d'attente multi-items avec thumbnail, progression et vitesse
-- Preview automatique (titre, chaîne, durée, miniature) dès que tu colles une URL
-- Historique des 10 dernières URLs
-- Drag & drop depuis le navigateur
-- Réordonnancement de la file (▲▼)
-- Reprise automatique si l'app crashe
-- Mise à jour yt-dlp en un clic depuis l'app
-- Notification Windows à la fin des téléchargements
-- Désinstallation propre via Programmes et fonctionnalités
+- Multi-item queue with thumbnail, progress bar and speed indicator
+- Auto-preview (title, channel, duration, thumbnail) as soon as you paste a URL
+- Last 10 URLs history
+- Drag & drop from the browser
+- Queue reordering (▲▼)
+- Auto-resume if the app crashes
+- One-click yt-dlp update from within the app
+- Auto-update: notified when a new version is available, downloads and installs in one click
+- Windows notification when all downloads are done
+- Clean uninstall via Programs and Features
 
 ## Stack
 
-PowerShell 5.1 + WPF, compilé en `.exe` via [ps2exe](https://github.com/MScholtes/PS2EXE). Installeur [Inno Setup 6](https://jrsoftware.org/isinfo.php). Build et release automatisés via GitHub Actions.
+PowerShell 5.1 + WPF, compiled to `.exe` via [ps2exe](https://github.com/MScholtes/PS2EXE). Installer built with [Inno Setup 6](https://jrsoftware.org/isinfo.php). Build and release automated via GitHub Actions.
