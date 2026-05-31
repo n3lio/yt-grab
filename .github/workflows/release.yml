@@ -54,7 +54,7 @@ jobs:
             -Title       'YouTube Grabber by n3lio' `
             -Description 'YouTube Grabber by n3lio' `
             -Company     'n3lio' `
-            -Product     'My YouTube Downloader' `
+            -Product     'YouTube Grabber' `
             -Version     $v `
             -Copyright   "(c) n3lio" `
             -IconFile    yt-grab.ico `
@@ -89,17 +89,16 @@ jobs:
         with:
           name: "v${{ steps.version.outputs.VERSION }}"
           body: |
-            ## yt-grab v${{ steps.version.outputs.VERSION }}
+            ## YouTube Grabber v${{ steps.version.outputs.VERSION }}
 
             ### Installation
-            1. Telecharge `yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe` ci-dessous
+            1. Télécharge `yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe` ci-dessous
             2. Double-clique et suis l'installeur
-            3. Lance *My YouTube Downloader* depuis le Bureau ou le Menu Demarrer
+            3. Lance *YouTube Grabber* depuis le Bureau ou le Menu Démarrer
 
-            ### Prerequis
+            ### Prérequis
             - Windows 10/11
-            - [yt-dlp.exe](https://github.com/yt-dlp/yt-dlp/releases/latest) quelque part sur ton PC
-            - [ffmpeg](https://ffmpeg.org/download.html) (idem)
+            - Rien d'autre — yt-dlp et ffmpeg sont téléchargés automatiquement au premier lancement ✔
           files: dist/yt-grab-${{ steps.version.outputs.VERSION }}-setup.exe
           draft: false
           prerelease: false
