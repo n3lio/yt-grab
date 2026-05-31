@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.5'
+$AppVersion = '2.0.6'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -228,30 +228,82 @@ $cfg0         = Read-Config
 $ytdlpInApp   = Join-Path $scriptDir 'yt-dlp.exe'
 $ffmpegInApp  = Join-Path $scriptDir 'ffmpeg.exe'
 
+$script:splashWin = $null
+
 if ((-not (Test-Path $ytdlpInApp)) -or (-not (Test-Path $ffmpegInApp))) {
     $splashXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        Title="YouTube Grabber" Height="130" Width="440"
+        Title="YouTube Grabber" Height="190" Width="460"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         WindowStyle="None" Background="#12121A" AllowsTransparency="True">
   <Border CornerRadius="12" Background="#12121A" BorderBrush="#3434A0" BorderThickness="1">
-    <StackPanel VerticalAlignment="Center" Margin="28,20">
-      <TextBlock Text="YouTube Grabber" Foreground="#6366F1" FontFamily="Segoe UI" FontSize="15" FontWeight="Bold"/>
-      <TextBlock Text="Premier lancement — telechargement des outils..." Foreground="#9090B0" FontFamily="Segoe UI" FontSize="10" Margin="0,8,0,12"/>
-      <ProgressBar IsIndeterminate="True" Height="4" Background="#1E1E2E" Foreground="#6366F1"/>
+    <StackPanel VerticalAlignment="Center" Margin="32,24">
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+        <Border Width="28" Height="28" CornerRadius="6" Background="#FF0000" Margin="0,0,10,0">
+          <Path Data="M 0,0 L 0,11 L 10,5.5 Z" Fill="White" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2,0,0,0"/>
+        </Border>
+        <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontFamily="Segoe UI" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+      </StackPanel>
+      <TextBlock x:Name="SplashMsg" Text="Premier lancement — téléchargement des outils..." Foreground="#9090B0" FontFamily="Segoe UI" FontSize="11" Margin="0,12,0,14"/>
+      <ProgressBar x:Name="SplashPrg" IsIndeterminate="True" Height="5" Background="#1E1E2E" Foreground="#6366F1">
+        <ProgressBar.Template>
+          <ControlTemplate TargetType="ProgressBar">
+            <Border CornerRadius="3" Background="{TemplateBinding Background}" ClipToBounds="True">
+              <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}"/>
+            </Border>
+          </ControlTemplate>
+        </ProgressBar.Template>
+      </ProgressBar>
+      <Button x:Name="SplashClose" Content="Fermer" Margin="0,16,0,0"
+              HorizontalAlignment="Right" Width="90" Height="30" Visibility="Collapsed">
+        <Button.Template>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="7" Background="#6366F1" Padding="14,0">
+              <TextBlock Text="Fermer" Foreground="White" FontFamily="Segoe UI" FontSize="12" FontWeight="SemiBold"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="Background" Value="#818CF8"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Button.Template>
+      </Button>
     </StackPanel>
   </Border>
 </Window>
 '@
-    $splashWin = [Windows.Markup.XamlReader]::Parse($splashXaml)
-    $splashWin.Show()
-    $splashWin.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Background)
+    $script:splashWin = [Windows.Markup.XamlReader]::Parse($splashXaml)
+    $script:splashWin.Show()
+    $script:splashWin.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Background)
 }
 
 $ytdlp  = Ensure-Tool -Name 'yt-dlp'  -ExeName 'yt-dlp.exe'
 $ffmpeg = Ensure-Tool -Name 'ffmpeg'  -ExeName 'ffmpeg.exe'
 
-if ($splashWin) { try { $splashWin.Close() } catch {} }
+if ($script:splashWin) {
+    try {
+        $splashMsg   = $script:splashWin.FindName('SplashMsg')
+        $splashPrg   = $script:splashWin.FindName('SplashPrg')
+        $splashClose = $script:splashWin.FindName('SplashClose')
+        if ($ytdlp -and $ffmpeg) {
+            $splashMsg.Text              = 'Outils téléchargés avec succès ✔'
+            $splashMsg.Foreground        = [Windows.Media.Brushes]::LightGreen
+            $splashPrg.IsIndeterminate   = $false
+            $splashPrg.Value             = 100
+            $splashPrg.Foreground        = [Windows.Media.Brushes]::LightGreen
+        } else {
+            $splashMsg.Text              = "Erreur : impossible de télécharger les outils. Vérifie ta connexion."
+            $splashMsg.Foreground        = [Windows.Media.Brushes]::Tomato
+            $splashPrg.IsIndeterminate   = $false
+            $splashPrg.Foreground        = [Windows.Media.Brushes]::Tomato
+        }
+        $splashClose.Visibility = 'Visible'
+        $splashClose.Add_Click({ $script:splashWin.Close() })
+        # Pas de fermeture auto — l'utilisateur clique Fermer
+    } catch { try { $script:splashWin.Close() } catch {} }
+}
 
 # ================================================================
 #  Config initiale
@@ -317,7 +369,7 @@ public class QueueItem : INotifyPropertyChanged {
 
     public string Url       { get { return _url; }       set { _url = value;       OnChanged("Url"); } }
     public string Title     { get { return _title; }     set { _title = value;     OnChanged("Title"); OnChanged("DisplayTitle"); } }
-    public string Status    { get { return _status; }    set { _status = value;    OnChanged("Status"); OnChanged("RetryVisible"); } }
+    public string Status    { get { return _status; }    set { _status = value;    OnChanged("Status"); OnChanged("RetryVisible"); OnChanged("StatusColor"); } }
     public int    Progress  { get { return _progress; }  set { _progress = value;  OnChanged("Progress"); } }
     public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); } }
     public object Thumbnail { get { return _thumbnail; } set { _thumbnail = value; OnChanged("Thumbnail"); } }
@@ -333,6 +385,17 @@ public class QueueItem : INotifyPropertyChanged {
     // Bouton relancer visible si Annulé ou Echec
     public string RetryVisible {
         get { return (_status == "Annulé" || (_status != null && _status.StartsWith("Echec"))) ? "Visible" : "Collapsed"; }
+    }
+
+    // Couleur du statut
+    public string StatusColor {
+        get {
+            if (_status == "Terminé")  return "#3FB950";  // vert
+            if (_status == "En cours") return "#6366F1";  // indigo
+            if (_status == "Annulé")   return "#E59700";  // orange
+            if (_status != null && _status.StartsWith("Echec")) return "#F85149"; // rouge
+            return "#6B6B8A"; // gris (En attente, etc.)
+        }
     }
 
     public event PropertyChangedEventHandler PropertyChanged;
@@ -636,7 +699,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
     <Style x:Key="PrgDark" TargetType="ProgressBar">
       <Setter Property="Background" Value="#1E1E30"/>
       <Setter Property="Foreground" Value="#6366F1"/>
-      <Setter Property="Height"     Value="6"/>
+      <Setter Property="Height"     Value="8"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="ProgressBar">
@@ -945,15 +1008,16 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                       <TextBlock Text="{Binding DisplayTitle}" Foreground="#E8E8F0" FontSize="12"
                                  TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Text="{Binding Url}" Foreground="#4A4A6A" FontSize="9"
+                      <TextBlock Text="{Binding Url}" Foreground="#55557A" FontSize="9"
                                  TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <!-- ProgressBar -->
                     <ProgressBar Grid.Column="2" Value="{Binding Progress}" Maximum="100" Minimum="0"
-                                 Style="{StaticResource PrgDark}" VerticalAlignment="Center" Margin="8,0"/>
+                                 Style="{StaticResource PrgDark}" Height="8" VerticalAlignment="Center" Margin="8,0"/>
                     <!-- Status -->
-                    <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="#6B6B8A"
-                               FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="{Binding StatusColor}"
+                               FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               TextWrapping="Wrap" TextAlignment="Center"/>
                     <!-- Retry -->
                     <Button Grid.Column="4" Content="↺" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnRetryItem" Style="{StaticResource BtnOk}" Padding="0" FontSize="12"
@@ -1453,6 +1517,18 @@ $BtnCancel.Add_Click({
     $BtnCancel.IsEnabled   = $false
     $TxtStatus.Text        = 'Annulé.'
     $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::Orange
+    # Nettoyage fichiers temporaires laissés par yt-dlp
+    try {
+        $outDir = $TxtOut.Text
+        if (Test-Path $outDir) {
+            Get-ChildItem $outDir -File | Where-Object {
+                $_.Extension -in @('.part','.webp','.ytdl','.tmp') -or
+                $_.Name -match '\.part$|\.ytdl$|\.f\d+\.'
+            } | ForEach-Object {
+                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {}
 })
 
 # ================================================================
@@ -1474,10 +1550,15 @@ $timer.Add_Tick({
                     $chunk = $rdr.ReadToEnd()
                     $script:logPos = $fs.Position
                     if ($chunk -and $script:currentItem) {
+                        # Parsing progression yt-dlp : "[download]  72.3% ..."
                         $ms = [regex]::Matches($chunk, '\[download\]\s+(\d+(?:\.\d+)?)%')
                         if ($ms.Count -gt 0) {
                             $pct = [int][double]$ms[$ms.Count-1].Groups[1].Value
                             $script:currentItem.Progress = [Math]::Max(0,[Math]::Min(100,$pct))
+                        }
+                        # Phase post-traitement (ffmpeg conversion) → indique 100 si on voit "Deleting original"
+                        if ($chunk -match 'Deleting original|has already been downloaded|100%') {
+                            $script:currentItem.Progress = 100
                         }
                     }
                 }
