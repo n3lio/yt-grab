@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.0.7'
+$AppVersion = '2.1.0'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -367,6 +367,8 @@ public class QueueItem : INotifyPropertyChanged {
     private int    _progress;
     private string _format;
     private object _thumbnail;
+    private string _speed;
+    private int    _sortOrder;
 
     public string Url       { get { return _url; }       set { _url = value;       OnChanged("Url"); } }
     public string Title     { get { return _title; }     set { _title = value;     OnChanged("Title"); OnChanged("DisplayTitle"); } }
@@ -374,8 +376,9 @@ public class QueueItem : INotifyPropertyChanged {
     public int    Progress  { get { return _progress; }  set { _progress = value;  OnChanged("Progress"); } }
     public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); } }
     public object Thumbnail { get { return _thumbnail; } set { _thumbnail = value; OnChanged("Thumbnail"); } }
+    public string Speed     { get { return _speed; }     set { _speed = value;     OnChanged("Speed"); } }
+    public int    SortOrder { get { return _sortOrder; } set { _sortOrder = value; OnChanged("SortOrder"); } }
 
-    // Titre affiché : titre ou URL si pas encore chargé
     public string DisplayTitle {
         get {
             if (!string.IsNullOrEmpty(_title)) return _title;
@@ -383,19 +386,17 @@ public class QueueItem : INotifyPropertyChanged {
         }
     }
 
-    // Bouton relancer visible si Annulé ou Echec
     public string RetryVisible {
         get { return (_status == "Annulé" || (_status != null && _status.StartsWith("Echec"))) ? "Visible" : "Collapsed"; }
     }
 
-    // Couleur du statut
     public string StatusColor {
         get {
-            if (_status == "Terminé")  return "#3FB950";  // vert
-            if (_status == "En cours") return "#6366F1";  // indigo
-            if (_status == "Annulé")   return "#E59700";  // orange
-            if (_status != null && _status.StartsWith("Echec")) return "#F85149"; // rouge
-            return "#6B6B8A"; // gris (En attente, etc.)
+            if (_status == "Terminé")  return "#3FB950";
+            if (_status == "En cours") return "#6366F1";
+            if (_status == "Annulé")   return "#E59700";
+            if (_status != null && _status.StartsWith("Echec")) return "#F85149";
+            return "#6B6B8A";
         }
     }
 
@@ -406,6 +407,34 @@ public class QueueItem : INotifyPropertyChanged {
 
 $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[QueueItem]
 
+# Reprise après crash : recharge les items depuis le config et remet "En cours" → "En attente"
+function Load-QueueFromConfig {
+    $c = Read-Config
+    $saved = Get-CfgProp $c 'queue' @()
+    foreach ($s in $saved) {
+        if (-not $s.Url) { continue }
+        $item = [QueueItem]::new()
+        $item.Url    = $s.Url
+        $item.Title  = if ($s.Title)  { $s.Title }  else { '' }
+        $item.Format = if ($s.Format) { $s.Format } else { 'MP3' }
+        # "En cours" au moment du crash → reprendre
+        $item.Status   = if ($s.Status -eq 'En cours') { 'En attente' } else { $s.Status }
+        $item.Progress = if ($s.Status -eq 'Terminé')  { 100 }          else { 0 }
+        $queueItems.Add($item)
+    }
+}
+
+function Save-QueueToConfig {
+    $c = Read-Config
+    $arr = @($queueItems | ForEach-Object {
+        [PSCustomObject]@{ Url=$_.Url; Title=$_.Title; Format=$_.Format; Status=$_.Status }
+    })
+    Set-CfgProp $c 'queue' $arr
+    Save-Config $c
+}
+
+Load-QueueFromConfig
+
 # ================================================================
 #  XAML principal
 # ================================================================
@@ -414,13 +443,14 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="YouTube Grabber by n3lio"
-    Width="780" Height="560" MinWidth="700" MinHeight="480"
+    Width="820" Height="580" MinWidth="680" MinHeight="500"
     WindowStartupLocation="CenterScreen"
     Background="#0E0E16"
     FontFamily="Segoe UI"
     WindowStyle="None"
     AllowsTransparency="True"
-    ResizeMode="CanResizeWithGrip">
+    ResizeMode="CanResizeWithGrip"
+    AllowDrop="True">
 
   <Window.Resources>
     <!-- Couleurs globales -->
@@ -746,16 +776,35 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
 
       <!-- ===== TITLE BAR ===== -->
       <Border Grid.Row="0" CornerRadius="12,12,0,0" Background="#12121E" x:Name="TitleBar">
-        <Grid Margin="16,0">
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <!-- Barre de progression globale en fond de la title bar -->
+          <ProgressBar x:Name="PrgGlobal" Grid.ColumnSpan="2" Value="0" Maximum="100"
+                       Height="42" VerticalAlignment="Stretch" HorizontalAlignment="Stretch"
+                       Opacity="0.07" Background="Transparent" Foreground="#6366F1" BorderThickness="0">
+            <ProgressBar.Template>
+              <ControlTemplate TargetType="ProgressBar">
+                <Border CornerRadius="12,12,0,0" Background="Transparent" ClipToBounds="True">
+                  <Border x:Name="PART_Indicator" CornerRadius="12,0,0,0" HorizontalAlignment="Left"
+                          Background="#6366F1"/>
+                </Border>
+              </ControlTemplate>
+            </ProgressBar.Template>
+          </ProgressBar>
+          <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0">
             <Ellipse Width="10" Height="10" Fill="#6366F1" Margin="0,0,8,0"/>
             <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
             <TextBlock x:Name="TxtVersion" Text="" Foreground="#8888AA" FontSize="11" VerticalAlignment="Center"/>
+            <TextBlock x:Name="TxtGlobalProgress" Text="" Foreground="#6B6BAA" FontSize="10"
+                       VerticalAlignment="Center" Margin="10,0,0,0" Visibility="Collapsed"/>
             <TextBlock x:Name="TxtYtdlpVer" Text="" Foreground="#555570" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0"/>
             <TextBlock x:Name="TxtUpdateBadge" Text="" Foreground="#E59700" FontSize="11"
                        VerticalAlignment="Center" Margin="10,0,0,0" Cursor="Hand"/>
           </StackPanel>
-          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0">
             <Button x:Name="BtnAbout"    Width="28" Height="28" Margin="0,0,6,0" Cursor="Hand"
                     Background="#1E1E30" BorderBrush="#2E2E4A" BorderThickness="1" ToolTip="À propos">
               <Button.Template>
@@ -812,6 +861,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
       </Border>
 
       <!-- ===== CONTENU ===== -->
+
       <Grid Grid.Row="1" Margin="20,14,20,14">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>  <!-- URL -->
@@ -887,6 +937,7 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <StackPanel Orientation="Horizontal" Margin="0,0,24,0">
               <TextBlock Text="Format :" Foreground="#9090B0" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
               <RadioButton x:Name="RdoMp3" Content="MP3 (320k)" Style="{StaticResource RdoDark}" IsChecked="True" GroupName="fmt"/>
+              <RadioButton x:Name="RdoWav" Content="WAV (lossless)" Style="{StaticResource RdoDark}" GroupName="fmt"/>
               <RadioButton x:Name="RdoMp4" Content="MP4 (best)" Style="{StaticResource RdoDark}" GroupName="fmt"/>
             </StackPanel>
             <CheckBox x:Name="ChkPlaylist" Content="Toute la playlist"  Style="{StaticResource ChkDark}"/>
@@ -960,11 +1011,13 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
             <!-- Header queue -->
             <Border Grid.Row="0" Background="#14141E" CornerRadius="9,9,0,0" Padding="14,0">
               <Grid>
-                <TextBlock Text="File d'attente" Foreground="#9090B0" FontSize="12"
+                <TextBlock x:Name="TxtQueueHeader" Text="File d'attente" Foreground="#9090B0" FontSize="12"
                            FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <Button x:Name="BtnClearDone" Content="Effacer terminés" HorizontalAlignment="Right"
-                        Style="{StaticResource BtnSecondary}" Height="26" Padding="12,0" FontSize="12"
-                        VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                  <Button x:Name="BtnClearDone" Content="Effacer terminés"
+                          Style="{StaticResource BtnSecondary}" Height="26" Padding="12,0" FontSize="11"
+                          VerticalAlignment="Center" Margin="0,0,6,0"/>
+                </StackPanel>
               </Grid>
             </Border>
             <!-- Liste -->
@@ -990,42 +1043,85 @@ $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[Que
               </ListView.ItemContainerStyle>
               <ListView.ItemTemplate>
                 <DataTemplate>
-                  <Grid Margin="10,5">
+                  <Grid Margin="10,5" AllowDrop="True" Background="Transparent">
                     <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="20"/>   <!-- drag handle + réorder -->
                       <ColumnDefinition Width="44"/>   <!-- thumbnail -->
                       <ColumnDefinition Width="*"/>    <!-- titre + url -->
-                      <ColumnDefinition Width="100"/>  <!-- progress -->
-                      <ColumnDefinition Width="58"/>   <!-- status -->
+                      <ColumnDefinition Width="90"/>   <!-- progress -->
+                      <ColumnDefinition Width="62"/>   <!-- speed -->
+                      <ColumnDefinition Width="62"/>   <!-- status -->
                       <ColumnDefinition Width="26"/>   <!-- retry -->
                       <ColumnDefinition Width="26"/>   <!-- remove -->
                     </Grid.ColumnDefinitions>
+                    <!-- Drag handle + boutons réorder -->
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Center">
+                      <Button Content="▲" Tag="{Binding}" Width="16" Height="14"
+                              x:Name="BtnMoveUp" Padding="0" FontSize="7" Margin="0,0,0,1"
+                              Cursor="Hand" Background="Transparent" BorderThickness="0" Foreground="#44446A">
+                        <Button.Template>
+                          <ControlTemplate TargetType="Button">
+                            <Border Background="Transparent">
+                              <TextBlock Text="▲" Foreground="#44446A" FontSize="7"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                              <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#9090B0"/>
+                              </Trigger>
+                            </ControlTemplate.Triggers>
+                          </ControlTemplate>
+                        </Button.Template>
+                      </Button>
+                      <Button Content="▼" Tag="{Binding}" Width="16" Height="14"
+                              x:Name="BtnMoveDown" Padding="0" FontSize="7"
+                              Cursor="Hand" Background="Transparent" BorderThickness="0" Foreground="#44446A">
+                        <Button.Template>
+                          <ControlTemplate TargetType="Button">
+                            <Border Background="Transparent">
+                              <TextBlock Text="▼" Foreground="#44446A" FontSize="7"
+                                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                              <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#9090B0"/>
+                              </Trigger>
+                            </ControlTemplate.Triggers>
+                          </ControlTemplate>
+                        </Button.Template>
+                      </Button>
+                    </StackPanel>
                     <!-- Thumbnail miniature -->
-                    <Border Grid.Column="0" CornerRadius="4" ClipToBounds="True"
-                            Width="40" Height="26" VerticalAlignment="Center" Margin="0,0,8,0"
+                    <Border Grid.Column="1" CornerRadius="4" ClipToBounds="True"
+                            Width="40" Height="26" VerticalAlignment="Center" Margin="2,0,6,0"
                             Background="#14141E">
                       <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
                     </Border>
                     <!-- Titre + URL -->
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center">
                       <TextBlock Text="{Binding DisplayTitle}" Foreground="#E8E8F0" FontSize="12"
                                  TextTrimming="CharacterEllipsis"/>
                       <TextBlock Text="{Binding Url}" Foreground="#55557A" FontSize="9"
                                  TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <!-- ProgressBar -->
-                    <ProgressBar Grid.Column="2" Value="{Binding Progress}" Maximum="100" Minimum="0"
-                                 Style="{StaticResource PrgDark}" Height="8" VerticalAlignment="Center" Margin="8,0"/>
+                    <ProgressBar Grid.Column="3" Value="{Binding Progress}" Maximum="100" Minimum="0"
+                                 Style="{StaticResource PrgDark}" Height="8" VerticalAlignment="Center" Margin="6,0"/>
+                    <!-- Vitesse -->
+                    <TextBlock Grid.Column="4" Text="{Binding Speed}" Foreground="#6B6BAA"
+                               FontSize="9" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               TextAlignment="Center"/>
                     <!-- Status -->
-                    <TextBlock Grid.Column="3" Text="{Binding Status}" Foreground="{Binding StatusColor}"
+                    <TextBlock Grid.Column="5" Text="{Binding Status}" Foreground="{Binding StatusColor}"
                                FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center"
                                TextWrapping="Wrap" TextAlignment="Center"/>
                     <!-- Retry -->
-                    <Button Grid.Column="4" Content="↺" Tag="{Binding}" Width="22" Height="22"
+                    <Button Grid.Column="6" Content="↺" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnRetryItem" Style="{StaticResource BtnOk}" Padding="0" FontSize="12"
                             VerticalAlignment="Center" HorizontalAlignment="Center"
                             Visibility="{Binding RetryVisible}"/>
                     <!-- Remove -->
-                    <Button Grid.Column="5" Content="✕" Tag="{Binding}" Width="22" Height="22"
+                    <Button Grid.Column="7" Content="✕" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnRemoveItem" Style="{StaticResource BtnDanger}" Padding="0" FontSize="10"
                             VerticalAlignment="Center" HorizontalAlignment="Center"/>
                   </Grid>
@@ -1075,7 +1171,10 @@ $TxtPreviewChannel= Find-Ctrl 'TxtPreviewChannel'
 $TxtPreviewDuration=Find-Ctrl 'TxtPreviewDuration'
 $TxtPreviewLoading= Find-Ctrl 'TxtPreviewLoading'
 $RdoMp3          = Find-Ctrl 'RdoMp3'
+$RdoWav          = Find-Ctrl 'RdoWav'
 $RdoMp4          = Find-Ctrl 'RdoMp4'
+$PrgGlobal       = Find-Ctrl 'PrgGlobal'
+$TxtGlobalProgress = Find-Ctrl 'TxtGlobalProgress'
 $ChkPlaylist     = Find-Ctrl 'ChkPlaylist'
 $ChkSubs         = Find-Ctrl 'ChkSubs'
 $ChkMeta         = Find-Ctrl 'ChkMeta'
@@ -1096,6 +1195,71 @@ $TxtVersion.Text = " v$AppVersion"
 $TxtOut.Text     = $defaultOut
 foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
 $LstQueue.ItemsSource = $queueItems
+if ($queueItems.Count -gt 0) {
+    $TxtQueueEmpty.Visibility = 'Collapsed'
+    Update-GlobalProgress
+}
+
+# ================================================================
+#  Helper — modale dark (remplace MessageBox.Show)
+# ================================================================
+function Show-DarkDialog {
+    param([string]$Message, [string]$Title='YouTube Grabber', [string]$Icon='ℹ')
+    $iconColor = switch ($Icon) {
+        '⚠' { '#E59700' }; '✕' { '#F85149' }; '✔' { '#3FB950' }; default { '#6366F1' }
+    }
+    $dlgXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="$Title" SizeToContent="Height" Width="360"
+        WindowStartupLocation="CenterOwner"
+        Background="#0E0E16" FontFamily="Segoe UI"
+        WindowStyle="None" AllowsTransparency="True" ResizeMode="NoResize">
+  <Border CornerRadius="12" Background="#0E0E16" BorderBrush="#2E2E4A" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="38"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="52"/>
+      </Grid.RowDefinitions>
+      <Border Grid.Row="0" CornerRadius="12,12,0,0" Background="#12121E" x:Name="DlgBar">
+        <TextBlock Text="$Title" Foreground="#E8E8F0" FontSize="12" FontWeight="SemiBold"
+                   VerticalAlignment="Center" Margin="16,0"/>
+      </Border>
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,16">
+        <TextBlock Text="$Icon" Foreground="$iconColor" FontSize="22" VerticalAlignment="Top" Margin="0,0,14,0"/>
+        <TextBlock Text="$Message" Foreground="#C8C8E0" FontSize="12" TextWrapping="Wrap"
+                   VerticalAlignment="Center" MaxWidth="270"/>
+      </StackPanel>
+      <Border Grid.Row="2" CornerRadius="0,0,12,12" Background="#12121E">
+        <Button x:Name="DlgOk" Width="90" Height="32" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Button.Template>
+            <ControlTemplate TargetType="Button">
+              <Border x:Name="bd" CornerRadius="7" Background="#6366F1">
+                <TextBlock Text="OK" Foreground="White" FontSize="12" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="bd" Property="Background" Value="#818CF8"/>
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Button.Template>
+        </Button>
+      </Border>
+    </Grid>
+  </Border>
+</Window>
+"@
+    try {
+        $dlg = [Windows.Markup.XamlReader]::Parse($dlgXaml)
+        $dlg.Owner = $window
+        $dlg.FindName('DlgBar').Add_MouseLeftButtonDown({ $dlg.DragMove() })
+        $dlg.FindName('DlgOk').Add_Click({ $dlg.Close() })
+        $dlg.ShowDialog() | Out-Null
+    } catch {}
+}
 
 # ================================================================
 #  Drag fenêtre sans bordure
@@ -1216,6 +1380,42 @@ $BtnAbout.Add_Click({
 })
 
 # ================================================================
+#  Raccourci Entrée sur l'URL → Ajouter
+# ================================================================
+$window.Add_KeyDown({
+    param($s, $e)
+    if ($e.Key -eq 'Return' -and $CmbUrl.IsFocused) {
+        $BtnAddQueue.RaiseEvent([System.Windows.RoutedEventArgs]::new([System.Windows.Controls.Button]::ClickEvent))
+    }
+})
+
+# ================================================================
+#  Drag & drop URL depuis le navigateur → fenêtre
+# ================================================================
+$window.Add_DragOver({
+    param($s, $e)
+    $e.Effects = if ($e.Data.GetDataPresent([System.Windows.DataFormats]::UnicodeText) -or
+                     $e.Data.GetDataPresent([System.Windows.DataFormats]::Text)) {
+        [System.Windows.DragDropEffects]::Copy
+    } else { [System.Windows.DragDropEffects]::None }
+    $e.Handled = $true
+})
+$window.Add_Drop({
+    param($s, $e)
+    try {
+        $txt = if ($e.Data.GetDataPresent([System.Windows.DataFormats]::UnicodeText)) {
+            $e.Data.GetData([System.Windows.DataFormats]::UnicodeText)
+        } else {
+            $e.Data.GetData([System.Windows.DataFormats]::Text)
+        }
+        if ($txt -match 'https?://') {
+            $CmbUrl.Text = $txt.Trim()
+            $CmbUrl.Focus()
+        }
+    } catch {}
+})
+
+# ================================================================
 #  Update badge (cliquable)
 # ================================================================
 $TxtUpdateBadge.Add_MouseLeftButtonDown({
@@ -1292,14 +1492,14 @@ $BtnAddQueue.Add_Click({
         $raw     = $CmbUrl.Text.Trim()
         $cleaned = Clean-YouTubeUrl $raw
         if (-not $cleaned -or $cleaned -notmatch '^https?://') {
-            [System.Windows.MessageBox]::Show('URL YouTube invalide.', $AppName, 'OK', 'Warning') | Out-Null
+            Show-DarkDialog 'URL YouTube invalide.' 'Erreur' '⚠'
             return
         }
         # Évite les doublons en attente
         $already = $queueItems | Where-Object { $_.Url -eq $cleaned -and $_.Status -in @('En attente','En cours') }
         if ($already) { return }
 
-        $fmt = if ($RdoMp3.IsChecked) { 'MP3' } else { 'MP4' }
+        $fmt = if ($RdoMp3.IsChecked) { 'MP3' } elseif ($RdoWav.IsChecked) { 'WAV' } else { 'MP4' }
         $item = [QueueItem]::new()
         $item.Url      = $cleaned
         $item.Title    = ''
@@ -1335,6 +1535,7 @@ $BtnAddQueue.Add_Click({
             }
         }
         $TxtQueueEmpty.Visibility = 'Collapsed'
+        Save-QueueToConfig
         Save-HistoryUrl $cleaned
         $CmbUrl.Items.Clear()
         foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
@@ -1343,7 +1544,7 @@ $BtnAddQueue.Add_Click({
     } catch { Write-Crash 'BtnAddQueue' $_ }
 })
 
-# Boutons dans la queue (supprimer + relancer)
+# Boutons dans la queue (supprimer + relancer + ↑↓)
 $LstQueue.AddHandler(
     [System.Windows.Controls.Button]::ClickEvent,
     [System.Windows.RoutedEventHandler]{
@@ -1357,18 +1558,39 @@ $LstQueue.AddHandler(
             if ($item.Status -ne 'En cours') {
                 $queueItems.Remove($item) | Out-Null
                 if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
+                Save-QueueToConfig
             }
         } elseif ($btn.Name -eq 'BtnRetryItem') {
             $item.Status   = 'En attente'
             $item.Progress = 0
+            $item.Speed    = ''
+        } elseif ($btn.Name -eq 'BtnMoveUp') {
+            $idx = $queueItems.IndexOf($item)
+            if ($idx -gt 0) { $queueItems.Move($idx, $idx - 1) }
+        } elseif ($btn.Name -eq 'BtnMoveDown') {
+            $idx = $queueItems.IndexOf($item)
+            if ($idx -lt ($queueItems.Count - 1)) { $queueItems.Move($idx, $idx + 1) }
         }
     }
 )
 
+# Double-clic sur item Terminé → ouvrir dans l'explorateur
+$LstQueue.Add_MouseDoubleClick({
+    param($s, $e)
+    try {
+        $item = $LstQueue.SelectedItem -as [QueueItem]
+        if ($item -and $item.Status -eq 'Terminé') {
+            $folder = $TxtOut.Text
+            if (Test-Path $folder) { Start-Process explorer.exe $folder }
+        }
+    } catch {}
+})
+
 $BtnClearDone.Add_Click({
-    $done = @($queueItems | Where-Object { $_.Status -in @('Terminé','Echec','Annulé') })
+    $done = @($queueItems | Where-Object { $_.Status -in @('Terminé','Annulé') -or $_.Status -like 'Echec*' })
     foreach ($d in $done) { $queueItems.Remove($d) | Out-Null }
     if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
+    Save-QueueToConfig
 })
 
 # ================================================================
@@ -1402,25 +1624,47 @@ $script:running         = $false
 $script:currentItem     = $null
 $script:pendingMetaJobs = [System.Collections.Generic.List[object]]::new()
 
+function Update-GlobalProgress {
+    $total    = $queueItems.Count
+    $done     = @($queueItems | Where-Object { $_.Status -eq 'Terminé' }).Count
+    $failed   = @($queueItems | Where-Object { $_.Status -like 'Echec*' -or $_.Status -eq 'Annulé' }).Count
+    if ($total -gt 0) {
+        $pct = [int](($done / $total) * 100)
+        $PrgGlobal.Value = $pct
+        $TxtGlobalProgress.Text       = "$done/$total"
+        $TxtGlobalProgress.Visibility = 'Visible'
+    } else {
+        $PrgGlobal.Value = 0
+        $TxtGlobalProgress.Visibility = 'Collapsed'
+    }
+}
+
 function Start-NextDownload {
     $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
     if (-not $next) {
         $script:running = $false
         $BtnStartAll.IsEnabled = $true
         $BtnCancel.IsEnabled   = $false
-        $TxtStatus.Text      = 'Tout terminé ✔'
-        $TxtStatus.Foreground = [System.Windows.Media.Brushes]::LightGreen
-        # Toast Windows
+        $TxtStatus.Text        = 'Tout terminé ✔'
+        $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::LightGreen
+        Update-GlobalProgress
+        # Toast sans Start-Sleep — on dispose via un DispatcherTimer one-shot
         try {
             [System.Windows.Forms.Application]::EnableVisualStyles()
-            $notify = New-Object System.Windows.Forms.NotifyIcon
-            $notify.Icon = [System.Drawing.SystemIcons]::Information
-            $notify.Visible = $true
-            $notify.BalloonTipTitle = 'YouTube Grabber'
-            $notify.BalloonTipText  = 'Tous les telechargements sont termines !'
-            $notify.ShowBalloonTip(4000)
-            Start-Sleep -Milliseconds 4500
-            $notify.Dispose()
+            $script:toastNotify = New-Object System.Windows.Forms.NotifyIcon
+            $script:toastNotify.Icon    = [System.Drawing.SystemIcons]::Information
+            $script:toastNotify.Visible = $true
+            $script:toastNotify.BalloonTipTitle = 'YouTube Grabber'
+            $script:toastNotify.BalloonTipText  = 'Tous les téléchargements sont terminés !'
+            $script:toastNotify.ShowBalloonTip(4000)
+            # Dispose après 5 s via timer one-shot
+            $script:toastTimer = New-Object System.Windows.Threading.DispatcherTimer
+            $script:toastTimer.Interval = [TimeSpan]::FromSeconds(5)
+            $script:toastTimer.Add_Tick({
+                try { $script:toastNotify.Dispose() } catch {}
+                $script:toastTimer.Stop()
+            })
+            $script:toastTimer.Start()
         } catch {}
         return
     }
@@ -1428,6 +1672,8 @@ function Start-NextDownload {
     $script:currentItem = $next
     $next.Status   = 'En cours'
     $next.Progress = 0
+    $next.Speed    = ''
+    Update-GlobalProgress
     $out = $TxtOut.Text
     if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
 
@@ -1436,21 +1682,19 @@ function Start-NextDownload {
     if ($next.Format -eq 'MP3') {
         $ytArgs.Add('-x'); $ytArgs.Add('--audio-format'); $ytArgs.Add('mp3')
         $ytArgs.Add('--audio-quality'); $ytArgs.Add('0')
+    } elseif ($next.Format -eq 'WAV') {
+        $ytArgs.Add('-x'); $ytArgs.Add('--audio-format'); $ytArgs.Add('wav')
     } else {
         $ytArgs.Add('-f'); $ytArgs.Add('bv*+ba/b')
         $ytArgs.Add('--merge-output-format'); $ytArgs.Add('mp4')
     }
 
-    # Métadonnées filtrées (titre, artiste, album, genre, année, track, disc — pas de commentaires)
     if ($ChkMeta.IsChecked) {
         $ytArgs.Add('--embed-thumbnail')
         $ytArgs.Add('--add-metadata')
-        # On post-process avec mutagen via yt-dlp pour retirer les champs indésirables
-        # yt-dlp supporte --parse-metadata pour écraser les champs
         $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(title)s:%(meta_title)s')
         $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(uploader)s:%(meta_artist)s')
         $ytArgs.Add('--parse-metadata'); $ytArgs.Add('%(upload_date>%Y)s:%(meta_date)s')
-        # Nettoie commentaire et description (souvent du spam)
         $ytArgs.Add('--parse-metadata'); $ytArgs.Add(':%(meta_comment)s')
         $ytArgs.Add('--parse-metadata'); $ytArgs.Add(':%(meta_description)s')
     }
@@ -1463,13 +1707,8 @@ function Start-NextDownload {
         $ytArgs.Add('--convert-subs'); $ytArgs.Add('srt')
     }
 
-    # Template nom de fichier :
-    # MP3 vidéo unique : "Artiste - Titre" (artist > creator > uploader, puis titre seul si rien)
-    # MP4 / playlist : comportement classique
     $template = if ($ChkPlaylist.IsChecked) {
         Join-Path $out '%(playlist_title)s\%(playlist_index)s - %(title)s.%(ext)s'
-    } elseif ($next.Format -eq 'MP3') {
-        Join-Path $out '%(title)s.%(ext)s'
     } else {
         Join-Path $out '%(title)s.%(ext)s'
     }
@@ -1490,7 +1729,9 @@ function Start-NextDownload {
     $script:proc    = Start-Process 'cmd.exe' -ArgumentList @('/c', $cmdLine) -WindowStyle Hidden -PassThru
     $script:running = $true
 
-    $TxtStatus.Text       = "Telechargement : $($next.Title.Substring(0, [Math]::Min(40, $next.Title.Length)))..."
+    $displayTitle = if ($next.Title) { $next.Title } else { $next.Url }
+    $short = if ($displayTitle.Length -gt 45) { $displayTitle.Substring(0,45) + '…' } else { $displayTitle }
+    $TxtStatus.Text       = "↓ $short"
     $TxtStatus.Foreground = [System.Windows.Media.Brushes]::CornflowerBlue
 }
 
@@ -1498,11 +1739,11 @@ $BtnStartAll.Add_Click({
     if ($script:running) { return }
     $pending = @($queueItems | Where-Object { $_.Status -eq 'En attente' })
     if ($pending.Count -eq 0) {
-        [System.Windows.MessageBox]::Show('La file est vide. Ajoute des URLs d''abord.', $AppName, 'OK', 'Information') | Out-Null
+        Show-DarkDialog 'La file est vide. Ajoute des URLs d''abord.' 'File vide' 'ℹ'
         return
     }
-    if (-not $ytdlp) { [System.Windows.MessageBox]::Show('yt-dlp introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
-    if (-not $ffmpeg) { [System.Windows.MessageBox]::Show('ffmpeg introuvable.', $AppName, 'OK', 'Error') | Out-Null; return }
+    if (-not $ytdlp)  { Show-DarkDialog 'yt-dlp introuvable.' 'Erreur' '✕'; return }
+    if (-not $ffmpeg) { Show-DarkDialog 'ffmpeg introuvable.' 'Erreur' '✕'; return }
     $BtnStartAll.IsEnabled = $false
     $BtnCancel.IsEnabled   = $true
     Start-NextDownload
@@ -1519,17 +1760,18 @@ $BtnCancel.Add_Click({
     $TxtStatus.Text        = 'Annulé.'
     $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::Orange
     # Nettoyage fichiers temporaires laissés par yt-dlp
+    # On cible uniquement les .part / .ytdl — pas les .webp qui peuvent être légitimes
     try {
         $outDir = $TxtOut.Text
         if (Test-Path $outDir) {
-            Get-ChildItem $outDir -File | Where-Object {
-                $_.Extension -in @('.part','.webp','.ytdl','.tmp') -or
-                $_.Name -match '\.part$|\.ytdl$|\.f\d+\.'
+            Get-ChildItem $outDir -File -Recurse | Where-Object {
+                $_.Extension -in @('.part', '.ytdl') -or $_.Name -match '\.f\d+\.\w+$'
             } | ForEach-Object {
                 Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
             }
         }
     } catch {}
+    Update-GlobalProgress
 })
 
 # ================================================================
@@ -1551,15 +1793,19 @@ $timer.Add_Tick({
                     $chunk = $rdr.ReadToEnd()
                     $script:logPos = $fs.Position
                     if ($chunk -and $script:currentItem) {
-                        # Parsing progression yt-dlp : "[download]  72.3% ..."
+                        # Parsing progression : "[download]  72.3% of ..."
                         $ms = [regex]::Matches($chunk, '\[download\]\s+(\d+(?:\.\d+)?)%')
                         if ($ms.Count -gt 0) {
                             $pct = [int][double]$ms[$ms.Count-1].Groups[1].Value
                             $script:currentItem.Progress = [Math]::Max(0,[Math]::Min(100,$pct))
                         }
-                        # Phase post-traitement (ffmpeg conversion) → indique 100 si on voit "Deleting original"
-                        if ($chunk -match 'Deleting original|has already been downloaded|100%') {
+                        # Parsing vitesse : "at 1.23MiB/s" ou "at 456.78KiB/s"
+                        $sv = [regex]::Match($chunk, 'at\s+([\d.]+\s*(?:KiB|MiB|GiB|KB|MB|GB)/s)')
+                        if ($sv.Success) { $script:currentItem.Speed = $sv.Groups[1].Value }
+                        # Phase post-traitement ffmpeg → 100%
+                        if ($chunk -match 'Deleting original|has already been downloaded') {
                             $script:currentItem.Progress = 100
+                            $script:currentItem.Speed    = ''
                         }
                     }
                 }
@@ -1570,13 +1816,20 @@ $timer.Add_Tick({
         if ($script:running -and $script:proc -and $script:proc.HasExited) {
             $exit = $script:proc.ExitCode
             if ($script:currentItem) {
-                if ($exit -eq 0) { $script:currentItem.Status = 'Terminé'; $script:currentItem.Progress = 100 }
-                else             { $script:currentItem.Status = "Echec ($exit)" }
+                if ($exit -eq 0) {
+                    $script:currentItem.Status   = 'Terminé'
+                    $script:currentItem.Progress = 100
+                    $script:currentItem.Speed    = ''
+                } else {
+                    $script:currentItem.Status = "Echec ($exit)"
+                    $script:currentItem.Speed  = ''
+                }
             }
             $script:running     = $false
             $script:currentItem = $null
             if ($script:logFile) { try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}; $script:logFile = $null }
-            # Passe au suivant
+            Save-QueueToConfig
+            Update-GlobalProgress
             Start-NextDownload
         }
 
@@ -1733,6 +1986,7 @@ try {
 }
 
 $timer.Stop()
+Save-QueueToConfig
 
 # Nettoyage jobs
 foreach ($j in @($script:updateJob,$script:ytdlpVerJob,$script:previewJob,$script:updateYtdlpJob)) {
