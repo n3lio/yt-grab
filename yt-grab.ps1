@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.1.1'
+$AppVersion = '2.2.0'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -372,9 +372,9 @@ public class QueueItem : INotifyPropertyChanged {
 
     public string Url       { get { return _url; }       set { _url = value;       OnChanged("Url"); } }
     public string Title     { get { return _title; }     set { _title = value;     OnChanged("Title"); OnChanged("DisplayTitle"); } }
-    public string Status    { get { return _status; }    set { _status = value;    OnChanged("Status"); OnChanged("RetryVisible"); OnChanged("StatusColor"); } }
+    public string Status    { get { return _status; }    set { _status = value;    OnChanged("Status"); OnChanged("RetryVisible"); OnChanged("StatusColor"); OnChanged("PlayVisible"); } }
     public int    Progress  { get { return _progress; }  set { _progress = value;  OnChanged("Progress"); } }
-    public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); } }
+    public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); OnChanged("FormatColor"); OnChanged("IsAudio"); OnChanged("PlayVisible"); } }
     public object Thumbnail { get { return _thumbnail; } set { _thumbnail = value; OnChanged("Thumbnail"); } }
     public string Speed     { get { return _speed; }     set { _speed = value;     OnChanged("Speed"); } }
     public int    SortOrder { get { return _sortOrder; } set { _sortOrder = value; OnChanged("SortOrder"); } }
@@ -398,6 +398,23 @@ public class QueueItem : INotifyPropertyChanged {
             if (_status != null && _status.StartsWith("Echec")) return "#F85149";
             return "#6B6B8A";
         }
+    }
+
+    public string FormatColor {
+        get {
+            if (_format == "MP3") return "#8B5CF6";
+            if (_format == "WAV") return "#3B82F6";
+            if (_format == "MP4") return "#EF4444";
+            return "#6B6B8A";
+        }
+    }
+
+    public bool IsAudio {
+        get { return _format == "MP3" || _format == "WAV"; }
+    }
+
+    public string PlayVisible {
+        get { return (_status == "Terminé" && (_format == "MP3" || _format == "WAV")) ? "Visible" : "Collapsed"; }
     }
 
     public event PropertyChangedEventHandler PropertyChanged;
@@ -726,9 +743,9 @@ Load-QueueFromConfig
       </Setter>
     </Style>
 
-    <!-- ProgressBar dark — Grid avec colonne * pour fill correct -->
+    <!-- ProgressBar dark — gradient indigo avec glow -->
     <Style x:Key="PrgDark" TargetType="ProgressBar">
-      <Setter Property="Background"    Value="#1E1E30"/>
+      <Setter Property="Background"    Value="#1A1A2E"/>
       <Setter Property="Foreground"    Value="#6366F1"/>
       <Setter Property="Height"        Value="8"/>
       <Setter Property="BorderThickness" Value="0"/>
@@ -739,7 +756,18 @@ Load-QueueFromConfig
               <Border CornerRadius="4" Background="{TemplateBinding Background}"/>
               <Border x:Name="PART_Track" CornerRadius="4" Background="Transparent"/>
               <Grid x:Name="PART_Indicator" ClipToBounds="True" HorizontalAlignment="Left">
-                <Border x:Name="Indicator" CornerRadius="4" Background="{TemplateBinding Foreground}"/>
+                <Border x:Name="Indicator" CornerRadius="4">
+                  <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                      <GradientStop Color="#6366F1" Offset="0"/>
+                      <GradientStop Color="#818CF8" Offset="0.6"/>
+                      <GradientStop Color="#A5B4FC" Offset="1"/>
+                    </LinearGradientBrush>
+                  </Border.Background>
+                  <Border.Effect>
+                    <DropShadowEffect Color="#6366F1" BlurRadius="6" ShadowDepth="0" Opacity="0.7"/>
+                  </Border.Effect>
+                </Border>
               </Grid>
             </Grid>
           </ControlTemplate>
@@ -1015,16 +1043,30 @@ Load-QueueFromConfig
         <!-- File d'attente -->
         <Border Grid.Row="5" CornerRadius="9" Background="#1A1A28" BorderBrush="#2E2E4A" BorderThickness="1"
                 ClipToBounds="True">
+          <Border.Effect>
+            <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="4" Opacity="0.4"/>
+          </Border.Effect>
           <Grid>
             <Grid.RowDefinitions>
               <RowDefinition Height="32"/>
               <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <!-- Header queue -->
-            <Border Grid.Row="0" Background="#14141E" CornerRadius="9,9,0,0" Padding="14,0">
+            <Border Grid.Row="0" Background="#12121E" CornerRadius="9,9,0,0" Padding="14,0">
+              <Border.Effect>
+                <DropShadowEffect Color="#000000" BlurRadius="4" ShadowDepth="1" Opacity="0.3"/>
+              </Border.Effect>
               <Grid>
-                <TextBlock x:Name="TxtQueueHeader" Text="File d'attente" Foreground="#9090B0" FontSize="12"
-                           FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="File d'attente" Foreground="#9090B0" FontSize="12"
+                             FontWeight="SemiBold" VerticalAlignment="Center"/>
+                  <Border x:Name="TxtQueueCount" CornerRadius="8" Background="#1E1E40"
+                          BorderBrush="#3A3A60" BorderThickness="1"
+                          Padding="8,2" Margin="8,0,0,0" VerticalAlignment="Center"
+                          Visibility="Collapsed">
+                    <TextBlock x:Name="TxtQueueCountLabel" Foreground="#8888CC" FontSize="10" FontWeight="SemiBold"/>
+                  </Border>
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                   <Button x:Name="BtnClearDone" Content="Effacer terminés"
                           Style="{StaticResource BtnSecondary}" Height="26" Padding="12,0" FontSize="11"
@@ -1055,17 +1097,28 @@ Load-QueueFromConfig
               </ListView.ItemContainerStyle>
               <ListView.ItemTemplate>
                 <DataTemplate>
-                  <Grid Margin="10,5" AllowDrop="True" Background="Transparent">
+                  <Grid x:Name="ItemRoot" Margin="10,5" AllowDrop="True" Background="Transparent" Opacity="0">
                     <Grid.ColumnDefinitions>
                       <ColumnDefinition Width="20"/>   <!-- drag handle + réorder -->
-                      <ColumnDefinition Width="44"/>   <!-- thumbnail -->
+                      <ColumnDefinition Width="68"/>   <!-- thumbnail -->
                       <ColumnDefinition Width="*"/>    <!-- titre + url -->
                       <ColumnDefinition Width="90"/>   <!-- progress -->
                       <ColumnDefinition Width="62"/>   <!-- speed -->
-                      <ColumnDefinition Width="62"/>   <!-- status -->
+                      <ColumnDefinition Width="70"/>   <!-- status -->
+                      <ColumnDefinition Width="26"/>   <!-- play -->
                       <ColumnDefinition Width="26"/>   <!-- retry -->
                       <ColumnDefinition Width="26"/>   <!-- remove -->
                     </Grid.ColumnDefinitions>
+                    <Grid.Triggers>
+                      <EventTrigger RoutedEvent="Loaded">
+                        <BeginStoryboard>
+                          <Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="ItemRoot" Storyboard.TargetProperty="Opacity"
+                                             From="0" To="1" Duration="0:0:0.25"/>
+                          </Storyboard>
+                        </BeginStoryboard>
+                      </EventTrigger>
+                    </Grid.Triggers>
                     <!-- Drag handle + boutons réorder -->
                     <StackPanel Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Center">
                       <Button Content="▲" Tag="{Binding}" Width="16" Height="14"
@@ -1103,37 +1156,120 @@ Load-QueueFromConfig
                         </Button.Template>
                       </Button>
                     </StackPanel>
-                    <!-- Thumbnail miniature -->
-                    <Border Grid.Column="1" CornerRadius="4" ClipToBounds="True"
-                            Width="40" Height="26" VerticalAlignment="Center" Margin="2,0,6,0"
-                            Background="#14141E">
-                      <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
-                    </Border>
+                    <!-- Thumbnail avec badge format + overlay waveform/play -->
+                    <Grid Grid.Column="1" VerticalAlignment="Center" Margin="2,0,8,0" Width="60" Height="38">
+                      <Border CornerRadius="5" ClipToBounds="True" Background="#14141E">
+                        <Border.Effect>
+                          <DropShadowEffect Color="#000000" BlurRadius="6" ShadowDepth="2" Opacity="0.5"/>
+                        </Border.Effect>
+                        <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                      </Border>
+                      <!-- Badge format coin bas gauche -->
+                      <Border x:Name="FmtBadge" CornerRadius="3,0,3,0" HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                              Padding="4,1" Background="#8B5CF6" Opacity="0.92">
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="Background" Value="#8B5CF6"/>
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding Format}" Value="WAV">
+                                <Setter Property="Background" Value="#3B82F6"/>
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding Format}" Value="MP4">
+                                <Setter Property="Background" Value="#EF4444"/>
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </Border.Style>
+                        <TextBlock Text="{Binding Format}" Foreground="White" FontSize="7" FontWeight="Bold"/>
+                      </Border>
+                      <!-- Waveform cosmétique (audio terminé) — 5 barres animées statiques -->
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Opacity="0.85">
+                        <StackPanel.Style>
+                          <Style TargetType="StackPanel">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                              <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                  <Condition Binding="{Binding Status}"  Value="Terminé"/>
+                                  <Condition Binding="{Binding IsAudio}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Visibility" Value="Visible"/>
+                              </MultiDataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </StackPanel.Style>
+                        <Border Width="3" Height="8"  CornerRadius="2" Background="#A5B4FC" Margin="1,0" VerticalAlignment="Center"/>
+                        <Border Width="3" Height="18" CornerRadius="2" Background="#818CF8" Margin="1,0" VerticalAlignment="Center"/>
+                        <Border Width="3" Height="12" CornerRadius="2" Background="#6366F1" Margin="1,0" VerticalAlignment="Center"/>
+                        <Border Width="3" Height="22" CornerRadius="2" Background="#818CF8" Margin="1,0" VerticalAlignment="Center"/>
+                        <Border Width="3" Height="10" CornerRadius="2" Background="#A5B4FC" Margin="1,0" VerticalAlignment="Center"/>
+                      </StackPanel>
+                    </Grid>
                     <!-- Titre + URL -->
                     <StackPanel Grid.Column="2" VerticalAlignment="Center">
                       <TextBlock Text="{Binding DisplayTitle}" Foreground="#E8E8F0" FontSize="12"
-                                 TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Text="{Binding Url}" Foreground="#55557A" FontSize="9"
+                                 TextTrimming="CharacterEllipsis" FontWeight="Medium"/>
+                      <TextBlock Text="{Binding Url}" Foreground="#44446A" FontSize="9"
                                  TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
-                    <!-- ProgressBar -->
+                    <!-- ProgressBar gradient -->
                     <ProgressBar Grid.Column="3" Value="{Binding Progress}" Maximum="100" Minimum="0"
                                  Style="{StaticResource PrgDark}" Height="8" VerticalAlignment="Center" Margin="6,0"/>
                     <!-- Vitesse -->
                     <TextBlock Grid.Column="4" Text="{Binding Speed}" Foreground="#6B6BAA"
                                FontSize="9" VerticalAlignment="Center" HorizontalAlignment="Center"
                                TextAlignment="Center"/>
-                    <!-- Status -->
-                    <TextBlock Grid.Column="5" Text="{Binding Status}" Foreground="{Binding StatusColor}"
-                               FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center"
-                               TextWrapping="Wrap" TextAlignment="Center"/>
+                    <!-- Status badge -->
+                    <Border Grid.Column="5" CornerRadius="5" Padding="6,3" VerticalAlignment="Center" HorizontalAlignment="Center">
+                      <Border.Style>
+                        <Style TargetType="Border">
+                          <Setter Property="Background" Value="#16161E"/>
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding Status}" Value="Terminé">
+                              <Setter Property="Background" Value="#0D2B18"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="En cours">
+                              <Setter Property="Background" Value="#16183A"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding Status}" Value="Annulé">
+                              <Setter Property="Background" Value="#2A1E08"/>
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Border.Style>
+                      <TextBlock Text="{Binding Status}" Foreground="{Binding StatusColor}"
+                                 FontSize="10" FontWeight="SemiBold"
+                                 TextWrapping="Wrap" TextAlignment="Center"/>
+                    </Border>
+                    <!-- Play (audio terminé) -->
+                    <Button Grid.Column="6" Content="▶" Tag="{Binding}" Width="22" Height="22"
+                            x:Name="BtnPlayItem" Padding="0" FontSize="9"
+                            VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Visibility="{Binding PlayVisible}"
+                            Cursor="Hand">
+                      <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                          <Border x:Name="bd" CornerRadius="5" Background="#1E2A3A"
+                                  BorderBrush="#3B82F6" BorderThickness="1">
+                            <TextBlock Text="▶" Foreground="#60A5FA" FontSize="9"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                          </Border>
+                          <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                              <Setter TargetName="bd" Property="Background" Value="#1E3A5A"/>
+                            </Trigger>
+                          </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                      </Button.Template>
+                    </Button>
                     <!-- Retry -->
-                    <Button Grid.Column="6" Content="↺" Tag="{Binding}" Width="22" Height="22"
+                    <Button Grid.Column="7" Content="↺" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnRetryItem" Style="{StaticResource BtnOk}" Padding="0" FontSize="12"
                             VerticalAlignment="Center" HorizontalAlignment="Center"
                             Visibility="{Binding RetryVisible}"/>
                     <!-- Remove -->
-                    <Button Grid.Column="7" Content="✕" Tag="{Binding}" Width="22" Height="22"
+                    <Button Grid.Column="8" Content="✕" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnRemoveItem" Style="{StaticResource BtnDanger}" Padding="0" FontSize="10"
                             VerticalAlignment="Center" HorizontalAlignment="Center"/>
                   </Grid>
@@ -1200,8 +1336,10 @@ $TxtStatus       = Find-Ctrl 'TxtStatus'
 $BtnUpdateYtdlp  = Find-Ctrl 'BtnUpdateYtdlp'
 $LstQueue        = Find-Ctrl 'LstQueue'
 $TxtQueueEmpty   = Find-Ctrl 'TxtQueueEmpty'
-$BtnClearDone    = Find-Ctrl 'BtnClearDone'
-$TxtYtdlpVer     = Find-Ctrl 'TxtYtdlpVer'
+$BtnClearDone        = Find-Ctrl 'BtnClearDone'
+$TxtYtdlpVer         = Find-Ctrl 'TxtYtdlpVer'
+$TxtQueueCount       = Find-Ctrl 'TxtQueueCount'
+$TxtQueueCountLabel  = Find-Ctrl 'TxtQueueCountLabel'
 
 # ================================================================
 #  Helpers UI (définis après parse XAML, avant tout appel)
@@ -1220,6 +1358,24 @@ function Update-GlobalProgress {
     }
 }
 
+function Update-QueueCounter {
+    $total   = $queueItems.Count
+    $done    = @($queueItems | Where-Object { $_.Status -eq 'Terminé' }).Count
+    $pending = @($queueItems | Where-Object { $_.Status -eq 'En attente' }).Count
+    $running = @($queueItems | Where-Object { $_.Status -eq 'En cours' }).Count
+    if ($total -gt 0) {
+        $TxtQueueCountLabel.Text    = "$done/$total"
+        $TxtQueueCount.Visibility   = 'Visible'
+        # Couleur selon état
+        if ($running -gt 0)      { $TxtQueueCountLabel.Foreground = '#818CF8' }
+        elseif ($done -eq $total){ $TxtQueueCountLabel.Foreground = '#3FB950' }
+        elseif ($pending -gt 0)  { $TxtQueueCountLabel.Foreground = '#8888CC' }
+        else                     { $TxtQueueCountLabel.Foreground = '#6B6BAA' }
+    } else {
+        $TxtQueueCount.Visibility = 'Collapsed'
+    }
+}
+
 # Init valeurs
 $TxtVersion.Text = " v$AppVersion"
 $TxtOut.Text     = $defaultOut
@@ -1228,6 +1384,7 @@ $LstQueue.ItemsSource = $queueItems
 if ($queueItems.Count -gt 0) {
     $TxtQueueEmpty.Visibility = 'Collapsed'
     Update-GlobalProgress
+    Update-QueueCounter
 }
 
 # ================================================================
@@ -1448,10 +1605,118 @@ $window.Add_Drop({
 })
 
 # ================================================================
-#  Update badge (cliquable)
+#  Update badge (cliquable) — télécharge + lance l'installer
 # ================================================================
 $TxtUpdateBadge.Add_MouseLeftButtonDown({
-    if ($script:updateAvail) { Start-Process $script:updateAvail.Url }
+    if (-not $script:updateAvail) { return }
+    $url = $script:updateAvail.Url
+    $tag = $script:updateAvail.Tag
+
+    # Si c'est un lien direct vers setup.exe → on propose de télécharger + lancer
+    # Si c'est la page releases → on ouvre simplement le navigateur
+    $isSetup = $url -match '\.exe$'
+
+    if ($isSetup) {
+        # Modale de confirmation dark
+        $dlgXaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Mise à jour" SizeToContent="Height" Width="380"
+        WindowStartupLocation="CenterOwner"
+        Background="#0E0E16" FontFamily="Segoe UI"
+        WindowStyle="None" AllowsTransparency="True" ResizeMode="NoResize">
+  <Border CornerRadius="12" Background="#0E0E16" BorderBrush="#2E2E4A" BorderThickness="1">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="38"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="56"/>
+      </Grid.RowDefinitions>
+      <Border Grid.Row="0" CornerRadius="12,12,0,0" Background="#12121E" x:Name="UpdBar">
+        <TextBlock Text="Mise à jour disponible" Foreground="#E8E8F0" FontSize="12" FontWeight="SemiBold"
+                   VerticalAlignment="Center" Margin="16,0"/>
+      </Border>
+      <StackPanel Grid.Row="1" Margin="20,16">
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+          <TextBlock Text="⬆" Foreground="#E59700" FontSize="22" VerticalAlignment="Top" Margin="0,0,12,0"/>
+          <TextBlock Foreground="#C8C8E0" FontSize="12" TextWrapping="Wrap" MaxWidth="290">
+            <Run Text="YouTube Grabber "/>
+            <Run x:Name="UpdVerRun" FontWeight="Bold" Foreground="#818CF8"/>
+            <Run Text=" est disponible."/>
+            <LineBreak/>
+            <Run Text="L'installer va se télécharger. L'app se fermera pour lancer la mise à jour." Foreground="#9090B0" FontSize="11"/>
+          </TextBlock>
+        </StackPanel>
+      </StackPanel>
+      <Border Grid.Row="2" CornerRadius="0,0,12,12" Background="#12121E">
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Button x:Name="UpdOk" Width="130" Height="32" Margin="0,0,10,0">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="bd" CornerRadius="7" Background="#6366F1">
+                  <TextBlock Text="⬇ Mettre à jour" Foreground="White" FontSize="12" FontWeight="SemiBold"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#818CF8"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+          </Button>
+          <Button x:Name="UpdCancel" Width="80" Height="32">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="bd" CornerRadius="7" Background="#1E1E30" BorderBrush="#2E2E4A" BorderThickness="1">
+                  <TextBlock Text="Plus tard" Foreground="#9090B0" FontSize="12"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="#28283E"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+          </Button>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Border>
+</Window>
+"@
+        try {
+            $dlg = [Windows.Markup.XamlReader]::Parse($dlgXaml)
+            $dlg.Owner = $window
+            $dlg.FindName('UpdBar').Add_MouseLeftButtonDown({ $dlg.DragMove() })
+            # Set version text inline
+            $verRun = $dlg.FindName('UpdVerRun')
+            if ($verRun) { $verRun.Text = $tag }
+            $script:confirmed = $false
+            $dlg.FindName('UpdOk').Add_Click({ $script:confirmed = $true; $dlg.Close() })
+            $dlg.FindName('UpdCancel').Add_Click({ $dlg.Close() })
+            $dlg.ShowDialog() | Out-Null
+
+            if ($script:confirmed) {
+                $script:confirmed = $false
+                # Téléchargement en background, puis lancement + fermeture app
+                $TxtUpdateBadge.Text = '⬇ Téléchargement...'
+                $dlUrl = $url
+                $script:autoUpdateJob = Start-Job -ScriptBlock {
+                    param($downloadUrl, $tag)
+                    try {
+                        $dest = Join-Path $env:TEMP "yt-grab-$tag-setup.exe"
+                        Invoke-WebRequest $downloadUrl -OutFile $dest -UseBasicParsing
+                        return $dest
+                    } catch { return $null }
+                } -ArgumentList $dlUrl, $tag
+            }
+        } catch {}
+    } else {
+        # Lien page releases — ouvre dans le navigateur
+        Start-Process $url
+    }
 })
 
 # ================================================================
@@ -1572,6 +1837,7 @@ $BtnAddQueue.Add_Click({
         }
         $TxtQueueEmpty.Visibility = 'Collapsed'
         Save-QueueToConfig
+        Update-QueueCounter
         Save-HistoryUrl $cleaned
         $CmbUrl.Items.Clear()
         foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
@@ -1595,11 +1861,30 @@ $LstQueue.AddHandler(
                 $queueItems.Remove($item) | Out-Null
                 if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
                 Save-QueueToConfig
+                Update-QueueCounter
             }
+        } elseif ($btn.Name -eq 'BtnPlayItem') {
+            # Ouvrir le fichier audio avec l'app par défaut
+            try {
+                $folder = $TxtOut.Text
+                if ($item.Title) {
+                    $safeName = $item.Title -replace '[\\/:*?"<>|]', '_'
+                    foreach ($ext in @('mp3','wav','m4a','ogg')) {
+                        $candidate = Join-Path $folder "$safeName.$ext"
+                        if (Test-Path $candidate) {
+                            Start-Process $candidate
+                            break
+                        }
+                    }
+                } else {
+                    if (Test-Path $folder) { Start-Process explorer.exe $folder }
+                }
+            } catch {}
         } elseif ($btn.Name -eq 'BtnRetryItem') {
             $item.Status   = 'En attente'
             $item.Progress = 0
             $item.Speed    = ''
+            Update-QueueCounter
         } elseif ($btn.Name -eq 'BtnMoveUp') {
             $idx = $queueItems.IndexOf($item)
             if ($idx -gt 0) { $queueItems.Move($idx, $idx - 1) }
@@ -1627,6 +1912,7 @@ $BtnClearDone.Add_Click({
     foreach ($d in $done) { $queueItems.Remove($d) | Out-Null }
     if ($queueItems.Count -eq 0) { $TxtQueueEmpty.Visibility = 'Visible' }
     Save-QueueToConfig
+    Update-QueueCounter
 })
 
 # ================================================================
@@ -1659,6 +1945,8 @@ $script:logPos          = 0
 $script:running         = $false
 $script:currentItem     = $null
 $script:pendingMetaJobs = [System.Collections.Generic.List[object]]::new()
+$script:autoUpdateJob   = $null
+$script:confirmed       = $false
 
 function Start-NextDownload {
     $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
@@ -1669,6 +1957,7 @@ function Start-NextDownload {
         $TxtStatus.Text        = 'Tout terminé ✔'
         $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::LightGreen
         Update-GlobalProgress
+        Update-QueueCounter
         # Toast sans Start-Sleep — on dispose via un DispatcherTimer one-shot
         try {
             [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -1695,6 +1984,7 @@ function Start-NextDownload {
     $next.Progress = 0
     $next.Speed    = ''
     Update-GlobalProgress
+    Update-QueueCounter
     $out = $TxtOut.Text
     if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null }
 
@@ -1793,6 +2083,7 @@ $BtnCancel.Add_Click({
         }
     } catch {}
     Update-GlobalProgress
+    Update-QueueCounter
 })
 
 # ================================================================
@@ -1851,6 +2142,7 @@ $timer.Add_Tick({
             if ($script:logFile) { try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}; $script:logFile = $null }
             Save-QueueToConfig
             Update-GlobalProgress
+            Update-QueueCounter
             Start-NextDownload
         }
 
@@ -1981,6 +2273,23 @@ $timer.Add_Tick({
             $BtnUpdateYtdlp.IsEnabled = $true
         }
 
+        # --- Auto-update download job ---
+        if ($script:autoUpdateJob -and $script:autoUpdateJob.State -in @('Completed','Failed')) {
+            try {
+                $setupPath = Receive-Job $script:autoUpdateJob -ErrorAction SilentlyContinue
+                if ($setupPath -and (Test-Path $setupPath)) {
+                    # Lance l'installer et ferme l'app
+                    Start-Process $setupPath
+                    $window.Close()
+                } else {
+                    $TxtUpdateBadge.Text = '⬆ Erreur téléchargement'
+                    $TxtUpdateBadge.Foreground = [System.Windows.Media.Brushes]::Tomato
+                }
+            } catch {}
+            Remove-Job $script:autoUpdateJob -Force -ErrorAction SilentlyContinue
+            $script:autoUpdateJob = $null
+        }
+
     } catch { Write-Crash 'DispatcherTimer.Tick' $_ }
 })
 
@@ -2010,7 +2319,7 @@ $timer.Stop()
 Save-QueueToConfig
 
 # Nettoyage jobs
-foreach ($j in @($script:updateJob,$script:ytdlpVerJob,$script:previewJob,$script:updateYtdlpJob)) {
+foreach ($j in @($script:updateJob,$script:ytdlpVerJob,$script:previewJob,$script:updateYtdlpJob,$script:autoUpdateJob)) {
     if ($j) { try { Remove-Job $j -Force -ErrorAction SilentlyContinue } catch {} }
 }
 if ($script:logFile -and (Test-Path $script:logFile)) {
