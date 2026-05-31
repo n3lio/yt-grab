@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.2.0'
+$AppVersion = '2.2.1'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -1166,7 +1166,7 @@ Load-QueueFromConfig
                       </Border>
                       <!-- Badge format coin bas gauche -->
                       <Border x:Name="FmtBadge" CornerRadius="3,0,3,0" HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                              Padding="4,1" Background="#8B5CF6" Opacity="0.92">
+                              Padding="4,1" Opacity="0.92">
                         <Border.Style>
                           <Style TargetType="Border">
                             <Setter Property="Background" Value="#8B5CF6"/>
@@ -1947,6 +1947,7 @@ $script:currentItem     = $null
 $script:pendingMetaJobs = [System.Collections.Generic.List[object]]::new()
 $script:autoUpdateJob   = $null
 $script:confirmed       = $false
+$script:cancelling      = $false
 
 function Start-NextDownload {
     $next = $queueItems | Where-Object { $_.Status -eq 'En attente' } | Select-Object -First 1
@@ -2061,8 +2062,10 @@ $BtnStartAll.Add_Click({
 })
 
 $BtnCancel.Add_Click({
+    $script:cancelling = $true
     if ($script:proc -and -not $script:proc.HasExited) {
-        Start-Process 'taskkill' -ArgumentList @('/F','/T','/PID',$script:proc.Id.ToString()) -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue
+        # -Wait omis — on ne bloque PAS le thread UI
+        Start-Process 'taskkill' -ArgumentList @('/F','/T','/PID',$script:proc.Id.ToString()) -WindowStyle Hidden -ErrorAction SilentlyContinue
     }
     if ($script:currentItem) { $script:currentItem.Status = 'Annulé'; $script:currentItem.Progress = 0 }
     $script:running        = $false
@@ -2125,10 +2128,14 @@ $timer.Add_Tick({
         }
 
         # --- Process terminé ---
-        if ($script:running -and $script:proc -and $script:proc.HasExited) {
-            $exit = $script:proc.ExitCode
+        if ($script:proc -and $script:proc.HasExited -and ($script:running -or $script:cancelling)) {
+            $exit         = $script:proc.ExitCode
+            $wasCancelled = $script:cancelling
             if ($script:currentItem) {
-                if ($exit -eq 0) {
+                if ($wasCancelled) {
+                    # Annulation explicite — statut "Annulé" déjà posé par BtnCancel
+                    $script:currentItem.Speed = ''
+                } elseif ($exit -eq 0) {
                     $script:currentItem.Status   = 'Terminé'
                     $script:currentItem.Progress = 100
                     $script:currentItem.Speed    = ''
@@ -2138,12 +2145,13 @@ $timer.Add_Tick({
                 }
             }
             $script:running     = $false
+            $script:cancelling  = $false
             $script:currentItem = $null
             if ($script:logFile) { try { Remove-Item $script:logFile -Force -ErrorAction SilentlyContinue } catch {}; $script:logFile = $null }
             Save-QueueToConfig
             Update-GlobalProgress
             Update-QueueCounter
-            Start-NextDownload
+            if (-not $wasCancelled) { Start-NextDownload }
         }
 
         # --- Meta jobs (fetch titre + thumbnail pour items ajoutés sans preview) ---
