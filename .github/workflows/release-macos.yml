@@ -1,0 +1,71 @@
+name: Build & Release (macOS)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          VERSION="${TAG_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        working-directory: macos
+        run: swift build -c release
+
+      - name: Create .app bundle
+        working-directory: macos
+        run: |
+          APP_DIR="dist/yt-grab.app"
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+
+          BINARY=".build/release/yt-grab-macos"
+          if [[ ! -f "$BINARY" ]]; then
+            BINARY=".build/arm64-apple-macosx/release/yt-grab-macos"
+          fi
+
+          cp "$BINARY" "$APP_DIR/Contents/MacOS/yt-grab-macos"
+          cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
+          echo -n "APPL????" > "$APP_DIR/Contents/PkgInfo"
+
+          if [[ -f "Resources/AppIcon.icns" ]]; then
+            cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+          fi
+
+      - name: Create DMG
+        working-directory: macos
+        env:
+          APP_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          DMG_TEMP="dist/dmg-temp"
+          mkdir -p "$DMG_TEMP"
+          cp -R "dist/yt-grab.app" "$DMG_TEMP/"
+          ln -s /Applications "$DMG_TEMP/Applications"
+
+          hdiutil create -volname "yt-grab" \
+            -srcfolder "$DMG_TEMP" \
+            -ov -format UDZO \
+            "dist/yt-grab-${APP_VERSION}.dmg"
+
+          rm -rf "$DMG_TEMP"
+
+      - name: Upload macOS DMG
+        uses: softprops/action-gh-release@v2
+        env:
+          APP_VERSION: ${{ steps.version.outputs.VERSION }}
+        with:
+          files: macos/dist/yt-grab-${{ steps.version.outputs.VERSION }}.dmg
+          draft: false
+          prerelease: false

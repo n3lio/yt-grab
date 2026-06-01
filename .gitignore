@@ -7,3 +7,7 @@ yt-grab-crash.log
 yt-grab.exe
 yt-grab.png
 build.log
+
+# macOS Swift build artifacts
+macos/.build/
+macos/dist/
