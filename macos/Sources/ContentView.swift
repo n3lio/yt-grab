@@ -47,7 +47,7 @@ struct ContentView: View {
             Button("Later", role: .cancel) {}
         } message: {
             if let update = appUpdater.updateAvailable {
-                Text("yt-grab v\(update.version) is available. You have v1.0.0.")
+                Text("YouTube Grabber v\(update.version) is available. You have v\(appUpdater.currentVersion).")
             }
         }
         .onChange(of: appUpdater.updateAvailable != nil) { _, hasUpdate in
@@ -91,7 +91,7 @@ struct ContentView: View {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.blue)
-            Text("yt-grab")
+            Text("YouTube Grabber")
                 .font(.largeTitle.bold())
 
             if toolManager.setupFailed {
@@ -130,8 +130,11 @@ struct ContentView: View {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.title2)
                     .foregroundStyle(.blue)
-                Text("yt-grab")
+                Text("YouTube Grabber")
                     .font(.title2.bold())
+                Text("v\(appUpdater.currentVersion)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Spacer()
 
                 // App update badge

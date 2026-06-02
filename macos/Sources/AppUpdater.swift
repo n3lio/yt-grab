@@ -10,7 +10,7 @@ final class AppUpdater: ObservableObject {
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0
 
-    private let currentVersion = "2.2.5"
+    let currentVersion = "2.2.5"
     private let githubRepo = "n3lio/yt-grab"
 
     struct AppUpdate {
