@@ -203,13 +203,18 @@ final class DownloadManager: ObservableObject {
             return
         }
 
-        // Read output line by line for progress
+        // Read output line by line for progress using AsyncStream
         let handle = pipe.fileHandleForReading
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            Task.detached { [weak item] in
+        enum OutputEvent: Sendable {
+            case progress(Double, String)
+            case outputFile(String)
+            case done(Int32)
+        }
+
+        let stream = AsyncStream<OutputEvent> { continuation in
+            Task.detached { @Sendable in
                 var buffer = Data()
-                var lastOutputFile: String?
 
                 while true {
                     let chunk = handle.availableData
@@ -221,43 +226,41 @@ final class DownloadManager: ObservableObject {
                         buffer.removeSubrange(buffer.startIndex...newlineRange.lowerBound)
 
                         if let line = String(data: lineData, encoding: .utf8) {
-                            // Check for destination line
                             if line.contains("[Merger]") || line.contains("[ExtractAudio]") || line.contains("[download] Destination:") {
-                                if let path = Self.parseOutputPath(line) {
-                                    lastOutputFile = path
+                                if let path = DownloadManager.parseOutputPath(line) {
+                                    continuation.yield(.outputFile(path))
                                 }
                             }
 
-                            let parsed = Self.parseProgress(line)
-                            if let parsed {
-                                await MainActor.run {
-                                    guard let item else { return }
-                                    item.status = .downloading(
-                                        progress: parsed.progress,
-                                        speed: parsed.speed
-                                    )
-                                }
+                            if let parsed = DownloadManager.parseProgress(line) {
+                                continuation.yield(.progress(parsed.progress, parsed.speed))
                             }
                         }
                     }
                 }
 
                 process.waitUntilExit()
+                continuation.yield(.done(process.terminationStatus))
+                continuation.finish()
+            }
+        }
 
-                await MainActor.run { [weak item] in
-                    guard let item else {
-                        continuation.resume()
-                        return
-                    }
-                    if process.terminationStatus == 0 {
-                        item.outputFilePath = lastOutputFile
-                        item.status = .completed(path: lastOutputFile ?? item.title)
-                    } else if case .cancelled = item.status {
-                        // already cancelled
-                    } else {
-                        item.status = .failed(error: "yt-dlp exited with code \(process.terminationStatus)")
-                    }
-                    continuation.resume()
+        // Consume events on MainActor
+        var lastOutputFile: String?
+        for await event in stream {
+            switch event {
+            case .progress(let progress, let speed):
+                item.status = .downloading(progress: progress, speed: speed)
+            case .outputFile(let path):
+                lastOutputFile = path
+            case .done(let exitCode):
+                if exitCode == 0 {
+                    item.outputFilePath = lastOutputFile
+                    item.status = .completed(path: lastOutputFile ?? item.title)
+                } else if case .cancelled = item.status {
+                    // already cancelled
+                } else {
+                    item.status = .failed(error: "yt-dlp exited with code \(exitCode)")
                 }
             }
         }
@@ -268,12 +271,12 @@ final class DownloadManager: ObservableObject {
 
     // MARK: - Progress parsing
 
-    private struct ProgressInfo: Sendable {
+    struct ProgressInfo: Sendable {
         let progress: Double
         let speed: String
     }
 
-    private nonisolated static func parseProgress(_ line: String) -> ProgressInfo? {
+    nonisolated static func parseProgress(_ line: String) -> ProgressInfo? {
         guard line.contains("%") else { return nil }
 
         var progress: Double = 0
@@ -292,7 +295,7 @@ final class DownloadManager: ObservableObject {
         return ProgressInfo(progress: progress, speed: speed)
     }
 
-    private nonisolated static func parseOutputPath(_ line: String) -> String? {
+    nonisolated static func parseOutputPath(_ line: String) -> String? {
         // Lines like: [download] Destination: /path/to/file.mp3
         // or: [ExtractAudio] Destination: /path/to/file.mp3
         if let range = line.range(of: "Destination: ") {
