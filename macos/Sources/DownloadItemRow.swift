@@ -3,10 +3,11 @@ import SwiftUI
 struct DownloadItemRow: View {
     @ObservedObject var item: DownloadItem
     let onCancel: () -> Void
+    var onRemove: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
-            // Thumbnail
+            // Thumbnail (16:9)
             thumbnailView
 
             // Format badge
@@ -15,7 +16,7 @@ struct DownloadItemRow: View {
             // Title + status
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.body)
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -27,14 +28,14 @@ struct DownloadItemRow: View {
             // Action button
             actionButton
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             openFile()
         }
     }
 
-    // MARK: - Thumbnail
+    // MARK: - Thumbnail (16:9, bigger)
 
     @ViewBuilder
     private var thumbnailView: some View {
@@ -42,16 +43,17 @@ struct DownloadItemRow: View {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 48, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .frame(width: 80, height: 45)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .shadow(color: .black.opacity(0.1), radius: 2, y: 1)
         } else {
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.secondary.opacity(0.2))
-                .frame(width: 48, height: 36)
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.1))
+                .frame(width: 80, height: 45)
                 .overlay {
-                    Image(systemName: "play.rectangle")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
+                    Image(systemName: item.isActive ? "waveform" : "play.rectangle")
+                        .foregroundStyle(.tertiary)
+                        .font(.title3)
                 }
         }
     }
@@ -60,12 +62,11 @@ struct DownloadItemRow: View {
 
     private var formatBadge: some View {
         Text(item.format.label)
-            .font(.caption.bold())
+            .font(.caption2.bold())
             .foregroundStyle(.white)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(badgeColor)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(badgeColor, in: RoundedRectangle(cornerRadius: 4))
     }
 
     private var badgeColor: Color {
@@ -82,7 +83,7 @@ struct DownloadItemRow: View {
     private var statusView: some View {
         switch item.status {
         case .queued:
-            Text("Queued")
+            Label("Queued", systemImage: "clock")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -96,16 +97,17 @@ struct DownloadItemRow: View {
             }
 
         case .downloading(let progress, let speed):
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
-                HStack {
+                    .tint(.blue)
+                HStack(spacing: 6) {
                     Text("\(Int(progress * 100))%")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .font(.caption.monospacedDigit().bold())
+                        .foregroundStyle(.blue)
                     if !speed.isEmpty {
-                        Text("• \(speed)")
-                            .font(.caption)
+                        Text(speed)
+                            .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -115,9 +117,12 @@ struct DownloadItemRow: View {
             HStack(spacing: 4) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("Done — double-click to reveal")
-                    .font(.caption)
+                Text("Done")
+                    .font(.caption.bold())
                     .foregroundStyle(.green)
+                Text("— double-click to reveal")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
 
         case .failed(let error):
@@ -145,25 +150,47 @@ struct DownloadItemRow: View {
 
     @ViewBuilder
     private var actionButton: some View {
-        switch item.status {
-        case .downloading, .fetching:
-            Button(action: onCancel) {
-                Image(systemName: "xmark.circle")
-                    .foregroundStyle(.red)
+        HStack(spacing: 6) {
+            switch item.status {
+            case .downloading, .fetching:
+                Button(action: onCancel) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(.red.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("Cancel download")
+
+            case .completed:
+                Button(action: openFile) {
+                    Image(systemName: "folder.fill")
+                        .font(.title3)
+                        .foregroundStyle(.blue.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .help("Show in Finder")
+
+                removeButton
+
+            case .failed, .cancelled:
+                removeButton
+
+            default:
+                EmptyView()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var removeButton: some View {
+        if let onRemove {
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Cancel download")
-
-        case .completed:
-            Button(action: openFile) {
-                Image(systemName: "folder")
-                    .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
-            .help("Show in Finder")
-
-        default:
-            EmptyView()
+            .help("Remove from list")
         }
     }
 
@@ -174,7 +201,6 @@ struct DownloadItemRow: View {
            FileManager.default.fileExists(atPath: filePath) {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: filePath)])
         } else {
-            // Fallback: open the output directory
             let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
             let ytGrabDir = downloads.appendingPathComponent("yt-grab")
             NSWorkspace.shared.open(ytGrabDir)

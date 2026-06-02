@@ -14,8 +14,7 @@ final class DownloadManager: ObservableObject {
 
     init() {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-        self.outputDir = downloads.appendingPathComponent("yt-grab")
-        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        self.outputDir = downloads
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let configDir = appSupport.appendingPathComponent("yt-grab")
@@ -45,8 +44,13 @@ final class DownloadManager: ObservableObject {
     }
 
     func remove(item: DownloadItem) {
-        guard item.isFinished else { return }
+        if item.isActive {
+            // Cancel first if still running
+            item.process?.terminate()
+            item.process = nil
+        }
         items.removeAll { $0.id == item.id }
+        persistQueue()
     }
 
     func removeCompleted(at indices: IndexSet) {
