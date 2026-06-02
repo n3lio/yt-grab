@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>yt-grab</string>
+    <string>YouTube Grabber</string>
     <key>CFBundleDisplayName</key>
-    <string>yt-grab</string>
+    <string>YouTube Grabber</string>
     <key>CFBundleIdentifier</key>
     <string>com.n3lio.yt-grab</string>
     <key>CFBundleVersion</key>

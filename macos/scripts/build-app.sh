@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-APP_NAME="yt-grab"
+APP_NAME="YouTube Grabber"
 BUNDLE_NAME="${APP_NAME}.app"
 VERSION=$(grep -m1 'CFBundleShortVersionString' "$PROJECT_DIR/Resources/Info.plist" -A1 | grep '<string>' | sed 's/.*<string>\(.*\)<\/string>.*/\1/')
 
@@ -80,7 +80,7 @@ cp -R "$APP_DIR" "$DMG_TEMP/"
 ln -s /Applications "$DMG_TEMP/Applications"
 
 # Create DMG
-hdiutil create -volname "yt-grab" \
+hdiutil create -volname "YouTube Grabber" \
     -srcfolder "$DMG_TEMP" \
     -ov -format UDZO \
     "$DMG_PATH" 2>/dev/null
@@ -93,4 +93,4 @@ echo "📦 Distribution files:"
 echo "   $APP_DIR"
 echo "   $DMG_PATH"
 echo ""
-echo "To install: open $DMG_PATH and drag yt-grab to Applications"
+echo "To install: open $DMG_PATH and drag YouTube Grabber to Applications"
