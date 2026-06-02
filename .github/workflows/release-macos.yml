@@ -57,7 +57,8 @@ jobs:
           DMG_TEMP="dist/dmg-temp"
           mkdir -p "$DMG_TEMP"
           cp -R "dist/YouTube Grabber.app" "$DMG_TEMP/"
-          ln -s /Applications "$DMG_TEMP/Applications"
+          cp scripts/install.command "$DMG_TEMP/Install YouTube Grabber.command"
+          chmod +x "$DMG_TEMP/Install YouTube Grabber.command"
 
           hdiutil create -volname "YouTube Grabber" \
             -srcfolder "$DMG_TEMP" \
