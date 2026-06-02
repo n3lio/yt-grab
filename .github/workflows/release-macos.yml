@@ -44,6 +44,11 @@ jobs:
             cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
           fi
 
+      - name: Ad-hoc codesign
+        working-directory: macos
+        run: |
+          codesign --force --deep --sign - "dist/yt-grab.app"
+
       - name: Create DMG
         working-directory: macos
         env:
