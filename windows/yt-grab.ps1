@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.2.6'
+$AppVersion = '2.2.7'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -382,15 +382,17 @@ public class QueueItem : INotifyPropertyChanged {
     private object _thumbnail;
     private string _speed;
     private int    _sortOrder;
+    private bool   _isPlaying;
 
     public string Url       { get { return _url; }       set { _url = value;       OnChanged("Url"); } }
     public string Title     { get { return _title; }     set { _title = value;     OnChanged("Title"); OnChanged("DisplayTitle"); } }
     public string Status    { get { return _status; }    set { _status = value;    OnChanged("Status"); OnChanged("RetryVisible"); OnChanged("StatusColor"); OnChanged("PlayVisible"); } }
     public int    Progress  { get { return _progress; }  set { _progress = value;  OnChanged("Progress"); } }
-    public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); OnChanged("FormatColor"); OnChanged("IsAudio"); OnChanged("PlayVisible"); } }
+    public string Format    { get { return _format; }    set { _format = value;    OnChanged("Format"); OnChanged("FormatColor"); OnChanged("IsAudio"); OnChanged("PlayVisible"); OnChanged("PlayIcon"); } }
     public object Thumbnail { get { return _thumbnail; } set { _thumbnail = value; OnChanged("Thumbnail"); } }
     public string Speed     { get { return _speed; }     set { _speed = value;     OnChanged("Speed"); } }
     public int    SortOrder { get { return _sortOrder; } set { _sortOrder = value; OnChanged("SortOrder"); } }
+    public bool   IsPlaying { get { return _isPlaying; } set { _isPlaying = value; OnChanged("IsPlaying"); OnChanged("PlayIcon"); } }
 
     public string DisplayTitle {
         get {
@@ -430,12 +432,29 @@ public class QueueItem : INotifyPropertyChanged {
         get { return (_status == "Done" && (_format == "MP3" || _format == "WAV")) ? "Visible" : "Collapsed"; }
     }
 
+    public string PlayIcon {
+        get { return _isPlaying ? "⏸" : "▶"; }
+    }
+
     public event PropertyChangedEventHandler PropertyChanged;
     protected void OnChanged(string n) { if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(n)); }
 }
 '@
 
 $queueItems = New-Object System.Collections.ObjectModel.ObservableCollection[QueueItem]
+
+# ================================================================
+#  MediaPlayer global pour preview audio
+# ================================================================
+$script:mediaPlayer = New-Object System.Windows.Media.MediaPlayer
+$script:currentPlayingItem = $null
+
+$script:mediaPlayer.Add_MediaEnded({
+    if ($script:currentPlayingItem) {
+        $script:currentPlayingItem.IsPlaying = $false
+        $script:currentPlayingItem = $null
+    }
+})
 
 # Reprise après crash : recharge les items depuis le config et remet "Downloading" → "Queued"
 function Load-QueueFromConfig {
@@ -1256,7 +1275,7 @@ Load-QueueFromConfig
                                  TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" TextAlignment="Center"/>
                     </Border>
                     <!-- Play (audio terminé) -->
-                    <Button Grid.Column="6" Content="▶" Tag="{Binding}" Width="22" Height="22"
+                    <Button Grid.Column="6" Tag="{Binding}" Width="22" Height="22"
                             x:Name="BtnPlayItem" Padding="0" FontSize="9"
                             VerticalAlignment="Center" HorizontalAlignment="Center"
                             Visibility="{Binding PlayVisible}"
@@ -1265,7 +1284,7 @@ Load-QueueFromConfig
                         <ControlTemplate TargetType="Button">
                           <Border x:Name="bd" CornerRadius="5" Background="#1E2A3A"
                                   BorderBrush="#3B82F6" BorderThickness="1">
-                            <TextBlock Text="▶" Foreground="#60A5FA" FontSize="9"
+                            <TextBlock Text="{Binding PlayIcon}" Foreground="#60A5FA" FontSize="9"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                           </Border>
                           <ControlTemplate.Triggers>
@@ -1407,6 +1426,19 @@ try {
     $debugMsg = "[$(Get-Date -Format o)] App started - Version: $AppVersion`n"
     Add-Content -Path (Join-Path $scriptDir 'ytgrabber-version.log') -Value $debugMsg -Encoding UTF8 -ErrorAction SilentlyContinue
 } catch {}
+
+# Cleanup fichiers résiduels au démarrage (thumbnails orphelins, fragments)
+try {
+    if (Test-Path $defaultOut) {
+        Get-ChildItem $defaultOut -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            $_.Extension -in @('.part', '.ytdl') -or
+            $_.Name -match '\.f\d+\.\w+$' -or
+            ($_.Extension -in @('.webp', '.png') -and $_.Name -notmatch '\.(mp3|mp4|wav|m4a|ogg)\.(webp|png)$')
+        } | ForEach-Object {
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+} catch {}
 $TxtOut.Text     = $defaultOut
 foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
 $LstQueue.ItemsSource = $queueItems
@@ -1485,7 +1517,14 @@ $TitleBar.Add_MouseLeftButtonDown({ $window.DragMove() })
 # ================================================================
 #  Boutons titre
 # ================================================================
-$BtnClose.Add_Click({ $window.Close() })
+$BtnClose.Add_Click({
+    # Stop MediaPlayer si en cours
+    if ($script:mediaPlayer) {
+        try { $script:mediaPlayer.Stop(); $script:mediaPlayer.Close() } catch {}
+    }
+    # Quitter vraiment l'application
+    [System.Windows.Application]::Current.Shutdown()
+})
 $BtnMinimize.Add_Click({ $window.WindowState = 'Minimized' })
 
 $BtnAbout.Add_Click({
@@ -1893,22 +1932,42 @@ $LstQueue.AddHandler(
                 Update-QueueCounter
             }
         } elseif ($btn.Name -eq 'BtnPlayItem') {
-            # Ouvrir le fichier audio avec l'app par défaut
+            # Play/Pause audio intégré
             try {
-                $folder = $TxtOut.Text
-                if ($item.Title) {
-                    $safeName = $item.Title -replace '[\\/:*?"<>|]', '_'
-                    foreach ($ext in @('mp3','wav','m4a','ogg')) {
-                        $candidate = Join-Path $folder "$safeName.$ext"
-                        if (Test-Path $candidate) {
-                            Start-Process $candidate
-                            break
+                if ($item.IsPlaying) {
+                    # Pause
+                    $script:mediaPlayer.Pause()
+                    $item.IsPlaying = $false
+                } else {
+                    # Stop l'ancien item si en cours
+                    if ($script:currentPlayingItem) {
+                        $script:mediaPlayer.Stop()
+                        $script:currentPlayingItem.IsPlaying = $false
+                    }
+
+                    # Cherche le fichier audio
+                    $folder = $TxtOut.Text
+                    $found = $false
+                    if ($item.Title) {
+                        $safeName = $item.Title -replace '[\\/:*?"<>|]', '_'
+                        foreach ($ext in @('mp3','wav','m4a','ogg')) {
+                            $candidate = Join-Path $folder "$safeName.$ext"
+                            if (Test-Path $candidate) {
+                                $script:mediaPlayer.Open([Uri]::new($candidate))
+                                $script:mediaPlayer.Play()
+                                $item.IsPlaying = $true
+                                $script:currentPlayingItem = $item
+                                $found = $true
+                                break
+                            }
                         }
                     }
-                } else {
-                    if (Test-Path $folder) { Start-Process explorer.exe $folder }
+                    if (-not $found) {
+                        # Fichier non trouvé → ouvre le dossier
+                        if (Test-Path $folder) { Start-Process explorer.exe $folder }
+                    }
                 }
-            } catch {}
+            } catch { Write-Crash 'BtnPlayItem' $_ }
         } elseif ($btn.Name -eq 'BtnRetryItem') {
             $item.Status   = 'Queued'
             $item.Progress = 0
@@ -2103,12 +2162,16 @@ $BtnCancel.Add_Click({
     $TxtStatus.Text        = 'Cancelled.'
     $TxtStatus.Foreground  = [System.Windows.Media.Brushes]::Orange
     # Nettoyage fichiers temporaires laissés par yt-dlp
-    # On cible uniquement les .part / .ytdl — pas les .webp qui peuvent être légitimes
     try {
         $outDir = $TxtOut.Text
         if (Test-Path $outDir) {
             Get-ChildItem $outDir -File -Recurse | Where-Object {
-                $_.Extension -in @('.part', '.ytdl') -or $_.Name -match '\.f\d+\.\w+$'
+                # .part / .ytdl = fragments download
+                # .f\d+ = fragments ffmpeg
+                # .webp / .png standalone = thumbnails résiduels (seulement si pas de vidéo/audio associé)
+                $_.Extension -in @('.part', '.ytdl') -or
+                $_.Name -match '\.f\d+\.\w+$' -or
+                ($_.Extension -in @('.webp', '.png') -and $_.Name -notmatch '\.(mp3|mp4|wav|m4a|ogg)\.(webp|png)$')
             } | ForEach-Object {
                 Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
             }
