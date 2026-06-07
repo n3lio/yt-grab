@@ -49,6 +49,26 @@ jobs:
         run: |
           codesign --force --deep --sign - "dist/YouTube Grabber.app"
 
+      - name: Create README
+        working-directory: macos
+        run: |
+          cat > "dist/README.txt" << 'EOF'
+          YouTube Grabber - Installation
+          ================================
+
+          1. Drag "YouTube Grabber.app" to the Applications folder
+          2. Before first launch, open Terminal and run:
+
+             xattr -cr "/Applications/YouTube Grabber.app"
+
+          3. Now you can launch YouTube Grabber from Applications
+
+          This removes the Gatekeeper quarantine on unsigned apps.
+
+          ---
+          Project: https://github.com/n3lio/yt-grab
+          EOF
+
       - name: Create DMG
         working-directory: macos
         env:
@@ -57,8 +77,8 @@ jobs:
           DMG_TEMP="dist/dmg-temp"
           mkdir -p "$DMG_TEMP"
           cp -R "dist/YouTube Grabber.app" "$DMG_TEMP/"
-          cp scripts/install.command "$DMG_TEMP/Install YouTube Grabber.command"
-          chmod +x "$DMG_TEMP/Install YouTube Grabber.command"
+          cp "dist/README.txt" "$DMG_TEMP/"
+          ln -s /Applications "$DMG_TEMP/Applications"
 
           hdiutil create -volname "YouTube Grabber" \
             -srcfolder "$DMG_TEMP" \

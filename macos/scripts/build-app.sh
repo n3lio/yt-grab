@@ -64,7 +64,28 @@ fi
 
 echo "✅ App bundle created: $APP_DIR"
 
-# Step 3: Create DMG
+# Step 3: Create README for DMG
+README_PATH="$DIST_DIR/README.txt"
+cat > "$README_PATH" << 'EOF'
+YouTube Grabber - Installation
+================================
+
+1. Drag "YouTube Grabber.app" to the Applications folder
+2. Before first launch, open Terminal and run:
+
+   xattr -cr "/Applications/YouTube Grabber.app"
+
+3. Now you can launch YouTube Grabber from Applications
+
+This removes the Gatekeeper quarantine on unsigned apps.
+
+---
+Project: https://github.com/n3lio/yt-grab
+EOF
+
+echo "✅ README created: $README_PATH"
+
+# Step 4: Create DMG
 DMG_NAME="yt-grab-${VERSION}.dmg"
 DMG_PATH="$DIST_DIR/$DMG_NAME"
 
@@ -75,6 +96,7 @@ DMG_TEMP="$DIST_DIR/dmg-temp"
 rm -rf "$DMG_TEMP"
 mkdir -p "$DMG_TEMP"
 cp -R "$APP_DIR" "$DMG_TEMP/"
+cp "$README_PATH" "$DMG_TEMP/"
 
 # Create symlink to /Applications
 ln -s /Applications "$DMG_TEMP/Applications"
@@ -93,4 +115,4 @@ echo "📦 Distribution files:"
 echo "   $APP_DIR"
 echo "   $DMG_PATH"
 echo ""
-echo "To install: open $DMG_PATH and drag YouTube Grabber to Applications"
+echo "To install: open DMG, read README.txt, drag app to Applications, run xattr command"
