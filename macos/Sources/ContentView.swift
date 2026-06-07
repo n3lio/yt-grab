@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var showUpdateAlert: Bool = false
     @State private var isDragTargeted: Bool = false
     @State private var alwaysOnTop: Bool = false
+    @State private var showAbout: Bool = false
     @StateObject private var downloadManager = DownloadManager()
     @StateObject private var toolManager = ToolManager.shared
     @StateObject private var appUpdater = AppUpdater.shared
@@ -54,6 +55,9 @@ struct ContentView: View {
             if hasUpdate {
                 showUpdateAlert = true
             }
+        }
+        .sheet(isPresented: $showAbout) {
+            AboutView()
         }
         .keyboardShortcut("q", modifiers: .command)
     }
@@ -160,6 +164,15 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
                     .tint(.orange)
                 }
+
+                // About button
+                Button {
+                    showAbout = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .help("About")
 
                 // Always on top toggle
                 Button {

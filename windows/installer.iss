@@ -71,7 +71,36 @@ Type: files;     Name: "{app}\yt-dlp.exe"
 Type: files;     Name: "{app}\ffmpeg.exe"
 Type: files;     Name: "{app}\ytgrabber.config.json"
 Type: files;     Name: "{app}\ytgrabber-crash.log"
+Type: files;     Name: "{app}\ytgrabber-version.log"
 Type: filesandordirs; Name: "{app}"
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ConfigFile, CrashLog, VersionLog: string;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if MsgBox('Do you want to delete all user preferences and logs?'#13#10#13#10 +
+              'This will remove:'#13#10 +
+              '- Configuration (history, last folder)'#13#10 +
+              '- Crash logs'#13#10 +
+              '- Version logs',
+              mbConfirmation, MB_YESNO) = IDYES then
+    begin
+      ConfigFile := ExpandConstant('{app}\ytgrabber.config.json');
+      CrashLog := ExpandConstant('{app}\ytgrabber-crash.log');
+      VersionLog := ExpandConstant('{app}\ytgrabber-version.log');
+
+      if FileExists(ConfigFile) then
+        DeleteFile(ConfigFile);
+      if FileExists(CrashLog) then
+        DeleteFile(CrashLog);
+      if FileExists(VersionLog) then
+        DeleteFile(VersionLog);
+    end;
+  end;
+end;
 
 [Run]
 ; Proposition de lancer l'app après installation

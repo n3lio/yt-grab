@@ -1427,18 +1427,8 @@ try {
     Add-Content -Path (Join-Path $scriptDir 'ytgrabber-version.log') -Value $debugMsg -Encoding UTF8 -ErrorAction SilentlyContinue
 } catch {}
 
-# Cleanup fichiers résiduels au démarrage (thumbnails orphelins, fragments)
-try {
-    if (Test-Path $defaultOut) {
-        Get-ChildItem $defaultOut -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
-            $_.Extension -in @('.part', '.ytdl') -or
-            $_.Name -match '\.f\d+\.\w+$' -or
-            ($_.Extension -in @('.webp', '.png') -and $_.Name -notmatch '\.(mp3|mp4|wav|m4a|ogg)\.(webp|png)$')
-        } | ForEach-Object {
-            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
-        }
-    }
-} catch {}
+# Note: pas de cleanup au démarrage pour éviter de supprimer des fichiers utilisateur
+# Le cleanup se fait seulement après chaque download (voir timer Tick)
 $TxtOut.Text     = $defaultOut
 foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
 $LstQueue.ItemsSource = $queueItems
@@ -2231,6 +2221,22 @@ $timer.Add_Tick({
                     $script:currentItem.Status   = 'Done'
                     $script:currentItem.Progress = 100
                     $script:currentItem.Speed    = ''
+
+                    # Cleanup thumbnails résiduels pour ce téléchargement
+                    try {
+                        $outDir = $TxtOut.Text
+                        if ($script:currentItem.Title -and (Test-Path $outDir)) {
+                            $safeName = $script:currentItem.Title -replace '[\\/:*?"<>|]', '_'
+                            # Cherche les thumbnails orphelins pour ce titre spécifique
+                            Get-ChildItem $outDir -File -ErrorAction SilentlyContinue | Where-Object {
+                                $_.Name -like "$safeName*" -and
+                                $_.Extension -in @('.webp', '.png') -and
+                                $_.Name -notmatch '\.(mp3|mp4|wav|m4a|ogg)\.(webp|png)$'
+                            } | ForEach-Object {
+                                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    } catch {}
                 } else {
                     $script:currentItem.Status = "Failed ($exit)"
                     $script:currentItem.Speed  = ''
