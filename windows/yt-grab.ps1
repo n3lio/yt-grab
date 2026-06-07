@@ -8,7 +8,7 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 #  App metadata
 # ================================================================
 $AppName    = 'YouTube Grabber by n3lio'
-$AppVersion = '2.2.5'
+$AppVersion = '2.2.6'
 $AppAuthor  = 'n3lio'
 $AppRepo    = 'https://github.com/n3lio/yt-grab'
 
@@ -301,9 +301,22 @@ if ($script:splashWin) {
             $splashPrg.Foreground        = [Windows.Media.Brushes]::Tomato
         }
         $splashClose.Visibility = 'Visible'
-        $splashClose.Add_Click({ $script:splashWin.Close() })
-        # Pas de fermeture auto — l'utilisateur clique Fermer
+
+        # Event handler : Close splash puis continue le script (Show main window)
+        $script:splashContinue = $false
+        $splashClose.Add_Click({
+            $script:splashWin.Close()
+            $script:splashContinue = $true
+        })
+
+        # Rester en mode non-bloquant — on attend que l'user clique
+        # (Dispatcher Invoke pour process events mais sans ShowDialog qui bloque)
+        while (-not $script:splashContinue -and $script:splashWin.IsLoaded) {
+            $script:splashWin.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Background)
+            Start-Sleep -Milliseconds 50
+        }
     } catch { try { $script:splashWin.Close() } catch {} }
+    $script:splashWin = $null
 }
 
 # ================================================================
@@ -1239,8 +1252,8 @@ Load-QueueFromConfig
                         </Style>
                       </Border.Style>
                       <TextBlock Text="{Binding Status}" Foreground="{Binding StatusColor}"
-                                 FontSize="10" FontWeight="SemiBold"
-                                 TextWrapping="Wrap" TextAlignment="Center"/>
+                                 FontSize="10" FontWeight="SemiBold" MaxWidth="58"
+                                 TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" TextAlignment="Center"/>
                     </Border>
                     <!-- Play (audio terminé) -->
                     <Button Grid.Column="6" Content="▶" Tag="{Binding}" Width="22" Height="22"
@@ -1349,7 +1362,17 @@ function Update-GlobalProgress {
     $total = $queueItems.Count
     $done  = @($queueItems | Where-Object { $_.Status -eq 'Done' }).Count
     if ($total -gt 0) {
-        $pct = [int](($done / $total) * 100)
+        # Calcul progression réelle : items Done = 100%, items Downloading = leur Progress réel
+        $totalProgress = 0
+        foreach ($item in $queueItems) {
+            if ($item.Status -eq 'Done') {
+                $totalProgress += 100
+            } elseif ($item.Status -eq 'Downloading') {
+                $totalProgress += $item.Progress
+            }
+            # Queued / Cancelled / Failed = 0%
+        }
+        $pct = [int]($totalProgress / $total)
         $PrgGlobal.Value = $pct
         $TxtGlobalProgress.Text       = "$done/$total"
         $TxtGlobalProgress.Visibility = 'Visible'
@@ -1379,6 +1402,11 @@ function Update-QueueCounter {
 
 # Init valeurs
 $TxtVersion.Text = " v$AppVersion"
+# Debug : log version au démarrage
+try {
+    $debugMsg = "[$(Get-Date -Format o)] App started - Version: $AppVersion`n"
+    Add-Content -Path (Join-Path $scriptDir 'ytgrabber-version.log') -Value $debugMsg -Encoding UTF8 -ErrorAction SilentlyContinue
+} catch {}
 $TxtOut.Text     = $defaultOut
 foreach ($h in $historyList) { $CmbUrl.Items.Add($h) | Out-Null }
 $LstQueue.ItemsSource = $queueItems
@@ -1507,9 +1535,9 @@ $BtnAbout.Add_Click({
       <!-- Content -->
       <StackPanel Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="30,0">
         <!-- Logo area -->
-        <Border CornerRadius="16" Background="#1A1A28" BorderBrush="#3434A0" BorderThickness="1"
+        <Border CornerRadius="16" Background="#FF0000" BorderBrush="#CC0000" BorderThickness="1"
                 Width="64" Height="64" HorizontalAlignment="Center" Margin="0,0,0,16">
-          <TextBlock Text="▶" Foreground="#6366F1" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          <Path Data="M 0,0 L 0,22 L 20,11 Z" Fill="White" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0,0,0"/>
         </Border>
         <TextBlock Text="YouTube Grabber" Foreground="#E8E8F0" FontSize="18" FontWeight="Bold"
                    HorizontalAlignment="Center"/>
