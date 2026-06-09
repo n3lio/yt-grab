@@ -17,6 +17,8 @@ Go to the [**Releases**](https://github.com/n3lio/yt-grab/releases/latest) page 
 
 > **yt-dlp** and **ffmpeg** are downloaded automatically on first launch. Nothing to install manually.
 
+> **Note:** Windows may show a SmartScreen warning ("Unknown publisher"). This is normal for indie software — click **More info** → **Run anyway**. On macOS, right-click → Open the first time.
+
 ---
 
 ## Installation
