@@ -9,7 +9,7 @@
 
 #define AppName      "YouTube Grabber by n3lio"
 #define AppShortName "YouTube Grabber"
-#define AppVersion   "2.2.7"
+#define AppVersion   "2.3.0"
 #define AppPublisher "n3lio"
 #define AppURL       "https://github.com/n3lio/yt-grab"
 #define AppExe       "yt-grab.exe"
@@ -48,6 +48,10 @@ WizardStyle=modern
 Name: "french";  MessagesFile: "compiler:Languages\French.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+french.DeletePrefsPrompt=Voulez-vous supprimer toutes les préférences et données utilisateur ?%n%nCela retirera :%n- La configuration (historique, dossier par défaut, file d'attente)%n- Les logs de crash%n- Les outils téléchargés (yt-dlp, ffmpeg)
+english.DeletePrefsPrompt=Do you want to delete all user preferences and data?%n%nThis will remove:%n- Configuration (history, last folder, queue)%n- Crash logs%n- Downloaded tools (yt-dlp, ffmpeg)
+
 [Tasks]
 Name: "desktopicon";    Description: "Créer un raccourci sur le &Bureau";          GroupDescription: "Raccourcis supplémentaires :"; Flags: unchecked
 Name: "startmenuicon";  Description: "Créer un raccourci dans le &Menu Démarrer";  GroupDescription: "Raccourcis supplémentaires :"; Flags: checkedonce
@@ -66,38 +70,27 @@ Name: "{group}\Désinstaller {#AppName}"; Filename: "{uninstallexe}";           
 Name: "{autodesktop}\{#AppName}";     Filename: "{app}\{#AppExe}"; IconFilename: "{app}\yt-grab.ico"; Tasks: desktopicon
 
 [UninstallDelete]
-; Supprime les fichiers générés à l'usage (non installés par le setup)
-Type: files;     Name: "{app}\yt-dlp.exe"
-Type: files;     Name: "{app}\ffmpeg.exe"
-Type: files;     Name: "{app}\ytgrabber.config.json"
-Type: files;     Name: "{app}\ytgrabber-crash.log"
-Type: files;     Name: "{app}\ytgrabber-version.log"
+; Nettoie les résidus de versions <2.3.0 qui écrivaient à côté de l'exe (Program Files)
+Type: files;          Name: "{app}\yt-dlp.exe"
+Type: files;          Name: "{app}\ffmpeg.exe"
+Type: files;          Name: "{app}\ytgrabber.config.json"
+Type: files;          Name: "{app}\ytgrabber-crash.log"
+Type: files;          Name: "{app}\ytgrabber-version.log"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  ConfigFile, CrashLog, VersionLog: string;
+  DataDir: string;
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    if MsgBox('Do you want to delete all user preferences and logs?'#13#10#13#10 +
-              'This will remove:'#13#10 +
-              '- Configuration (history, last folder)'#13#10 +
-              '- Crash logs'#13#10 +
-              '- Version logs',
-              mbConfirmation, MB_YESNO) = IDYES then
+    if MsgBox(ExpandConstant('{cm:DeletePrefsPrompt}'), mbConfirmation, MB_YESNO) = IDYES then
     begin
-      ConfigFile := ExpandConstant('{app}\ytgrabber.config.json');
-      CrashLog := ExpandConstant('{app}\ytgrabber-crash.log');
-      VersionLog := ExpandConstant('{app}\ytgrabber-version.log');
-
-      if FileExists(ConfigFile) then
-        DeleteFile(ConfigFile);
-      if FileExists(CrashLog) then
-        DeleteFile(CrashLog);
-      if FileExists(VersionLog) then
-        DeleteFile(VersionLog);
+      // v2.3.0+ : toutes les données utilisateur vivent dans %LOCALAPPDATA%\YouTubeGrabber
+      DataDir := ExpandConstant('{localappdata}\YouTubeGrabber');
+      if DirExists(DataDir) then
+        DelTree(DataDir, True, True, True);
     end;
   end;
 end;
