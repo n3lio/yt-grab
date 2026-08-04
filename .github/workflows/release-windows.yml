@@ -56,8 +56,9 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          Invoke-WebRequest 'https://jrsoftware.org/download.php/is.exe' -OutFile is-installer.exe
-          Start-Process is-installer.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait
+          # Chocolatey est pré-installé sur windows-latest — plus fiable que l'URL
+          # jrsoftware.org/download.php qui a bougé (page HTML au lieu de .exe direct)
+          choco install innosetup --no-progress -y
 
       - name: Build installer (Inno Setup)
         shell: pwsh
